@@ -1,0 +1,130 @@
+@import "tailwindcss";
+
+@theme {
+  --font-sans: var(--font-inter), ui-sans-serif, system-ui, sans-serif;
+  --font-mono: ui-monospace, "SF Mono", Menlo, monospace;
+
+  /* ---------- surfaces (light) ---------- */
+  --color-canvas:   #EAF2F8;   /* pale blue-white — app background */
+  --color-surface:  #FFFFFF;   /* white — cards */
+  --color-elevated: #F7FAFC;   /* near-white — hover / subtle fills */
+  --color-raised:   #EAF2F8;   /* pale blue — inputs, chips */
+
+  /* ---------- secondary surface (warm cream) ---------- */
+  --color-cream:      #DCD3CE;
+  --color-cream-soft: #EFE8E4;
+
+  /* ---------- lines ---------- */
+  --color-line:        #D6E2EC;
+  --color-line-strong: #B8CDDD;
+
+  /* ---------- text ---------- */
+  --color-ink:    #0F2A3F;   /* deep navy — reads as near-black on white */
+  --color-muted:  #5C7A8F;
+  --color-subtle: #8FA3B5;
+
+  /* ---------- primary accent (sky blue) ---------- */
+  --color-accent:      #7FBCDF;
+  --color-accent-soft: #5DA5D1;
+  --color-accent-deep: #3A7DA8;
+  --color-accent-dim:  #E4EFF6;
+
+  /* ---------- secondary (cream / warm) ---------- */
+  --color-warm:      #B8A398;
+  --color-warm-soft: #DCD3CE;
+
+  /* ---------- states ---------- */
+  --color-ok:      #4CB782;
+  --color-ok-dim:  #E4F4EC;
+  --color-warn:    #E3A75A;
+  --color-warn-dim: #FBF1E0;
+  --color-danger:  #DE6A7F;
+  --color-danger-dim: #FBE9ED;
+
+  /* ---------- shadows (soft, blue-tinted) ---------- */
+  --shadow-sm: 0 1px 2px 0 rgb(15 42 63 / 0.06);
+  --shadow-md: 0 6px 18px -6px rgb(15 42 63 / 0.12);
+  --shadow-lg: 0 20px 40px -16px rgb(15 42 63 / 0.18);
+  --shadow-glow: 0 0 0 1px rgb(127 188 223 / 0.4), 0 12px 32px -10px rgb(127 188 223 / 0.5);
+
+  /* ---------- radius ---------- */
+  --radius-card: 16px;
+  --radius-btn:  10px;
+
+  /* ---------- motion ---------- */
+  --ease-out-soft: cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+@layer base {
+  html {
+    color-scheme: light;
+  }
+  * {
+    border-color: var(--color-line);
+  }
+  body {
+    background-color: var(--color-canvas);
+    background-image:
+      radial-gradient(1000px 500px at 12% -10%, rgb(127 188 223 / 0.18), transparent 60%),
+      radial-gradient(900px 480px at 90% 110%, rgb(220 211 206 / 0.35), transparent 65%);
+    background-attachment: fixed;
+    color: var(--color-ink);
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+  ::selection {
+    background-color: rgb(127 188 223 / 0.35);
+    color: var(--color-ink);
+  }
+  ::-webkit-scrollbar { width: 10px; height: 10px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb {
+    background: var(--color-line-strong);
+    border-radius: 999px;
+    border: 2px solid var(--color-canvas);
+  }
+  ::-webkit-scrollbar-thumb:hover { background: var(--color-muted); }
+}
+
+@layer utilities {
+  .font-mono { font-family: var(--font-mono); }
+
+  .text-gradient {
+    background: linear-gradient(135deg, var(--color-accent-soft), var(--color-warm));
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+  }
+
+  .border-gradient {
+    position: relative;
+  }
+  .border-gradient::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    border-radius: inherit;
+    padding: 1px;
+    background: linear-gradient(135deg, var(--color-accent), var(--color-warm));
+    -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+    -webkit-mask-composite: xor;
+            mask-composite: exclude;
+    pointer-events: none;
+    opacity: 0.5;
+  }
+
+  .glow-accent { box-shadow: var(--shadow-glow); }
+  .glow-cyan   { box-shadow: var(--shadow-glow); }
+
+  .pulse-soft { animation: pulse-soft 2.4s var(--ease-out-soft) infinite; }
+  @keyframes pulse-soft {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.6; }
+  }
+
+  .doc-violet  { --doc-color: 127 188 223; }  /* sky */
+  .doc-cyan    { --doc-color: 92 165 209; }   /* deeper sky */
+  .doc-amber   { --doc-color: 227 167 90; }   /* warm amber */
+  .doc-rose    { --doc-color: 222 106 127; }  /* rose */
+  .doc-emerald { --doc-color: 76 183 130; }   /* green */
+}
