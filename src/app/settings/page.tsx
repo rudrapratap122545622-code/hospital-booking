@@ -14,12 +14,6 @@ const DAYS = [
   "Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday",
 ];
 
-const PERMISSIONS: { id: PagePermission; label: string }[] = [
-  { id: "reception", label: "Reception (queue, walk-ins, check-in)" },
-  { id: "doctor", label: "Doctor workspace" },
-  { id: "settings", label: "Settings (manage clinic + staff)" },
-];
-
 export default function SettingsPage() {
   useEnsureLoaded();
   const clinic = useClinic((s) => s.clinic);
@@ -45,8 +39,12 @@ export default function SettingsPage() {
   const [staffEmail, setStaffEmail] = useState("");
   const [staffPassword, setStaffPassword] = useState("");
   const [staffName, setStaffName] = useState("");
+  
+  // Simplified: default is receptionist
   const [staffRole, setStaffRole] = useState<StaffRole>("receptionist");
   const [staffDoctorId, setStaffDoctorId] = useState("");
+  
+  // Simplified: permissions are auto-set based on role
   const [staffPerms, setStaffPerms] = useState<PagePermission[]>(["reception"]);
   const [staffErr, setStaffErr] = useState<string | null>(null);
   const [staffSaving, setStaffSaving] = useState(false);
@@ -55,23 +53,19 @@ export default function SettingsPage() {
     void loadStaff();
   }, [loadStaff]);
 
-  if (!clinic) {
+  // THE LOCK: If not owner, block the page entirely
+  if (!clinic || currentRole !== "owner") {
     return (
       <AppShell>
         <div className="space-y-2">
           <p className="text-sm text-muted">
-            {loaded ? "Clinic not found." : "Loading clinic…"}
+            {!loaded ? "Loading clinic…" : "Access denied."}
           </p>
           {storeError && <p className="text-xs text-danger">{storeError}</p>}
+          {loaded && currentRole !== "owner" && (
+            <p className="text-xs text-danger">Only the clinic owner can access Settings.</p>
+          )}
         </div>
-      </AppShell>
-    );
-  }
-
-  if (currentRole !== "owner") {
-    return (
-      <AppShell>
-        <p className="text-sm text-muted">Only the owner can view settings.</p>
       </AppShell>
     );
   }
@@ -90,25 +84,27 @@ export default function SettingsPage() {
     setAddDoctorOpen(false);
   }
 
-  function togglePerm(p: PagePermission) {
-    setStaffPerms((prev) =>
-      prev.includes(p) ? prev.filter((x) => x !== p) : [...prev, p]
-    );
+  // Handle role changes and auto-set permissions
+  function handleRoleChange(role: StaffRole) {
+    setStaffRole(role);
+    if (role === "receptionist") {
+      setStaffPerms(["reception"]);
+      setStaffDoctorId("");
+    } else if (role === "doctor") {
+      setStaffPerms(["doctor"]);
+    }
   }
 
   async function submitStaff(e: React.FormEvent) {
     e.preventDefault();
     setStaffErr(null);
+    
     if (!staffEmail.trim() || !staffPassword.trim() || !staffName.trim()) {
       setStaffErr("All fields are required.");
       return;
     }
     if (staffPassword.length < 6) {
       setStaffErr("Password must be at least 6 characters.");
-      return;
-    }
-    if (staffPerms.length === 0) {
-      setStaffErr("Pick at least one page they can access.");
       return;
     }
     if (staffRole === "doctor" && !staffDoctorId) {
@@ -143,6 +139,7 @@ export default function SettingsPage() {
   return (
     <AppShell>
       <div className="mx-auto max-w-3xl space-y-6">
+        {/* CLINIC SETTINGS */}
         <Card>
           <SectionHeader title="Clinic" subtitle="Basic profile and booking window." />
           <div className="mt-5 grid gap-4 sm:grid-cols-2">
@@ -178,6 +175,7 @@ export default function SettingsPage() {
           </div>
         </Card>
 
+        {/* OPENING HOURS */}
         <Card>
           <SectionHeader
             title="Opening hours"
@@ -200,6 +198,7 @@ export default function SettingsPage() {
           </div>
         </Card>
 
+        {/* DOCTORS */}
         <Card>
           <div className="flex items-start justify-between gap-3">
             <SectionHeader
@@ -271,11 +270,12 @@ export default function SettingsPage() {
           </div>
         </Card>
 
+        {/* STAFF */}
         <Card>
           <div className="flex items-start justify-between gap-3">
             <SectionHeader
-              title="Staff"
-              subtitle="Create staff logins and choose which pages they can access."
+              title="Staff Logins"
+              subtitle="Create logins for receptionists and doctors."
             />
             <Button
               className="h-8 shrink-0 px-3 text-xs"
@@ -296,15 +296,11 @@ export default function SettingsPage() {
                     {s.fullName || s.email || "(no name)"}
                   </p>
                   <p className="text-[11px] text-muted">
-                    {s.email} · {s.role}
+                    {s.email} · <span className="capitalize">{s.role}</span>
+                    {s.role === "doctor" && s.doctorId && (
+                      <> · {doctors.find((d) => d.id === s.doctorId)?.name}</>
+                    )}
                   </p>
-                  <div className="mt-1 flex flex-wrap gap-1">
-                    {s.permissions.map((p) => (
-                      <Badge key={p} tone="muted">
-                        {p}
-                      </Badge>
-                    ))}
-                  </div>
                 </div>
                 <RemoveStaffButton 
                   id={s.id} 
@@ -362,8 +358,8 @@ export default function SettingsPage() {
         </form>
       </Dialog>
 
-      {/* ADD STAFF DIALOG */}
-      <Dialog open={staffOpen} onClose={() => setStaffOpen(false)} title="Add staff">
+      {/* ADD STAFF DIALOG (SIMPLIFIED) */}
+      <Dialog open={staffOpen} onClose={() => setStaffOpen(false)} title="Add staff login">
         <form onSubmit={submitStaff} className="space-y-4">
           <div>
             <label className="text-xs font-medium text-muted">Full name</label>
@@ -385,9 +381,7 @@ export default function SettingsPage() {
               />
             </div>
             <div>
-              <label className="text-xs font-medium text-muted">
-                Password (min 6 chars)
-              </label>
+              <label className="text-xs font-medium text-muted">Password</label>
               <input
                 type="text"
                 value={staffPassword}
@@ -398,15 +392,14 @@ export default function SettingsPage() {
           </div>
 
           <div>
-            <label className="text-xs font-medium text-muted">Role</label>
+            <label className="text-xs font-medium text-muted">What is their role?</label>
             <select
               value={staffRole}
-              onChange={(e) => setStaffRole(e.target.value as StaffRole)}
+              onChange={(e) => handleRoleChange(e.target.value as StaffRole)}
               className="mt-1 w-full rounded-lg border border-line bg-elevated px-3 py-2 text-sm text-ink outline-none focus:border-accent"
             >
-              <option value="owner">Owner (full access)</option>
-              <option value="receptionist">Receptionist</option>
-              <option value="doctor">Doctor</option>
+              <option value="receptionist">Receptionist (Manages the front desk)</option>
+              <option value="doctor">Doctor (Manages their own queue)</option>
             </select>
           </div>
 
@@ -430,33 +423,13 @@ export default function SettingsPage() {
             </div>
           )}
 
-          <div>
-            <p className="text-xs font-medium text-muted">Pages they can access</p>
-            <div className="mt-2 space-y-2">
-              {PERMISSIONS.map((p) => (
-                <label
-                  key={p.id}
-                  className="flex cursor-pointer items-center gap-2 text-sm"
-                >
-                  <input
-                    type="checkbox"
-                    checked={staffPerms.includes(p.id)}
-                    onChange={() => togglePerm(p.id)}
-                    className="h-4 w-4"
-                  />
-                  <span>{p.label}</span>
-                </label>
-              ))}
-            </div>
-          </div>
-
           {staffErr && (
             <div className="rounded-lg bg-danger/10 px-3 py-2 text-xs text-danger">
               {staffErr}
             </div>
           )}
 
-          <div className="flex justify-end gap-2">
+          <div className="flex justify-end gap-2 pt-2">
             <Button
               type="button"
               variant="ghost"
@@ -527,7 +500,7 @@ function RemoveStaffButton({ id, name, onRemove }: { id: string; name: string; o
   );
 }
 
-// REPLACED: Dropdown Time Picker (No lag)
+// Dropdown Time Picker (No lag)
 function ShiftsRow({
   label,
   shifts,
@@ -541,7 +514,6 @@ function ShiftsRow({
 }) {
   const isOpen = shifts.length > 0;
 
-  // THE FIX IS HERE: added `: string[]` to satisfy strict TypeScript
   const times: string[] = [];
   for (let h = 8; h <= 22; h++) {
     times.push(`${String(h).padStart(2, "0")}:00`);
