@@ -22,7 +22,6 @@ const DAYS = [
 
 const PERMISSIONS: { id: PagePermission; label: string }[] = [
   { id: "reception", label: "Reception (queue, walk-ins, check-in)" },
-  { id: "appointments", label: "Appointments list" },
   { id: "doctor", label: "Doctor workspace" },
   { id: "settings", label: "Settings (manage clinic + staff)" },
 ];
@@ -583,28 +582,28 @@ function ShiftsRow({
 
       {isOpen && (
         <div className="mt-2 space-y-2 pl-24">
-          {shifts.map((s, i) => (
-            <div key={i} className="flex items-center gap-2">
+          {shifts.map((s, idx) => (
+            <div key={idx} className="flex items-center gap-2">
               <input
                 type="time"
                 value={s.start}
-                onChange={(e) => updateShift(i, { start: e.target.value })}
+                onChange={(e) => updateShift(idx, { start: e.target.value })}
                 className={timeInputClass}
               />
               <span className="text-xs text-muted">to</span>
               <input
                 type="time"
                 value={s.end}
-                onChange={(e) => updateShift(i, { end: e.target.value })}
+                onChange={(e) => updateShift(idx, { end: e.target.value })}
                 className={timeInputClass}
               />
-              <button
-                type="button"
-                onClick={() => removeShift(i)}
-                className="ml-1 text-xs text-muted transition-colors hover:text-danger"
+              <Button
+                variant="ghost"
+                className="h-7 px-2.5 text-[11px]"
+                onClick={() => removeShift(idx)}
               >
-                ✕
-              </button>
+                Remove
+              </Button>
             </div>
           ))}
         </div>

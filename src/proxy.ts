@@ -3,7 +3,6 @@ import { NextResponse, type NextRequest } from "next/server";
 
 const PAGE_PERMISSIONS: { prefix: string; permission: string }[] = [
   { prefix: "/reception", permission: "reception" },
-  { prefix: "/appointments", permission: "appointments" },
   { prefix: "/doctor", permission: "doctor" },
   { prefix: "/settings", permission: "settings" },
 ];
@@ -13,7 +12,6 @@ const FALLBACK = "/book";
 function landingPageFor(permissions: string[]): string {
   if (permissions.includes("reception")) return "/reception";
   if (permissions.includes("doctor")) return "/doctor";
-  if (permissions.includes("appointments")) return "/appointments";
   if (permissions.includes("settings")) return "/settings";
   return FALLBACK;
 }
