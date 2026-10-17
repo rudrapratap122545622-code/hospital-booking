@@ -419,17 +419,25 @@ export const useClinic = create<ClinicStore>((set, get) => ({
       .maybeSingle();
 
     if (error) {
+      alert("CALL NEXT FAILED (Update Queue): " + error.message);
       set({ error: error.message });
       return;
     }
     
-    if (!data) return;
+    if (!data) {
+      alert("CALL NEXT FAILED: Another user clicked first, or RLS blocked reading the updated row.");
+      return;
+    }
 
-    await supabase.from("queue_events").insert({
+    const { error: eventErr } = await supabase.from("queue_events").insert({
       queue_entry_id: next.id,
       type: "called",
       actor_label: "Reception",
     });
+
+    if (eventErr) {
+      alert("CALL NEXT FAILED (Audit Log): " + eventErr.message);
+    }
     
     set((s) => ({
       queueEntries: s.queueEntries.map((e) =>
@@ -445,15 +453,23 @@ export const useClinic = create<ClinicStore>((set, get) => ({
       .from("queue_entries")
       .update({ status: "completed", completed_at: nowIso })
       .eq("id", queueEntryId);
+      
     if (error) {
+      alert("COMPLETE FAILED (Update Queue): " + error.message);
       set({ error: error.message });
       return;
     }
-    await supabase.from("queue_events").insert({
+
+    const { error: eventErr } = await supabase.from("queue_events").insert({
       queue_entry_id: queueEntryId,
       type: "completed",
       actor_label: "Doctor",
     });
+
+    if (eventErr) {
+      alert("COMPLETE FAILED (Audit Log): " + eventErr.message);
+    }
+
     set((s) => ({
       queueEntries: s.queueEntries.map((e) =>
         e.id === queueEntryId ? { ...e, status: "completed", completedAt: nowIso } : e
