@@ -25,10 +25,10 @@ export function Sidebar() {
   const role = useClinic((s) => s.currentRole);
   const clinic = useClinic((s) => s.clinic);
 
-  // Owners always see everything, regardless of the permissions array.
+  // Filter links: Owner sees all, Staff sees what they have permission for
   const visible = role === "owner"
     ? NAV
-    : NAV.filter((n) => permissions.includes(n.permission));
+    : NAV.filter((n) => n.permission !== "settings" && permissions.includes(n.permission));
 
   async function signOut() {
     const supabase = createClient();

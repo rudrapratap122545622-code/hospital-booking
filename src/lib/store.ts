@@ -242,11 +242,16 @@ export const useClinic = create<ClinicStore>((set, get) => ({
       return;
     }
 
+    // FIX: If the user is an owner, force full permissions regardless of the DB array
+    const perms = staff.role === "owner" 
+      ? ["reception", "doctor", "settings"] as PagePermission[]
+      : (staff.permissions as PagePermission[]) ?? [];
+
     set({
       loaded: true,
       error: null,
       currentUserId: user.id,
-      currentPermissions: (staff.permissions as PagePermission[]) ?? [],
+      currentPermissions: perms,
       currentRole: staff.role as StaffRole,
       currentDoctorId: (staff.doctor_id as string | null) ?? null,
       clinic: toClinic(clinicRes.data as Row),
@@ -400,7 +405,6 @@ export const useClinic = create<ClinicStore>((set, get) => ({
     const { pausedDoctors } = get();
     if (pausedDoctors.includes(doctorId)) return;
 
-    // 1. Fetch the absolute latest state from the DB to find the next waiting patient
     const { data: currentList, error: fetchErr } = await supabase
       .from("queue_entries")
       .select("*")
@@ -421,7 +425,6 @@ export const useClinic = create<ClinicStore>((set, get) => ({
 
     const nextPatient = currentList[0];
 
-    // 2. Update this specific patient to "in_consultation"
     const nowIso = new Date().toISOString();
     const { error: updateErr } = await supabase
       .from("queue_entries")
@@ -433,14 +436,12 @@ export const useClinic = create<ClinicStore>((set, get) => ({
       return;
     }
 
-    // 3. Log the event (ignore if this fails, so the UI still updates)
     await supabase.from("queue_events").insert({
       queue_entry_id: nextPatient.id,
       type: "called",
       actor_label: "Reception",
     });
 
-    // 4. Force a full reload of the store to update the UI instantly
     await get().load();
   },
 
@@ -464,7 +465,6 @@ export const useClinic = create<ClinicStore>((set, get) => ({
       actor_label: "Doctor",
     });
 
-    // Force a full reload
     await get().load();
   },
 
