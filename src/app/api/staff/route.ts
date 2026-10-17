@@ -7,7 +7,6 @@ export async function GET() {
   const { data: auth } = await supabase.auth.getUser();
   if (!auth.user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
-  // Verify the user has settings permissions
   const { data: me } = await supabase
     .from("clinic_staff")
     .select("clinic_id, role, permissions")
@@ -18,7 +17,6 @@ export async function GET() {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 
-  // Only fetch staff for MY clinic
   const { data, error } = await supabase
     .from("clinic_staff")
     .select("*")
@@ -30,7 +28,7 @@ export async function GET() {
 
 export async function POST(req: Request) {
   const body = await req.json();
-  const { email, password, fullName, role, doctorId, permissions } = body;
+  const { email, password, fullName, role, doctorId } = body;
 
   const supabase = await createClient();
   const { data: auth } = await supabase.auth.getUser();
@@ -68,12 +66,21 @@ export async function POST(req: Request) {
     );
   }
 
+  // FIX: Ensure the role matches the DB check constraint exactly
+  let dbRole = "receptionist";
+  let perms = ["reception"];
+  
+  if (role === "doctor") {
+    dbRole = "doctor";
+    perms = ["doctor"];
+  }
+
   const { error: staffErr } = await admin.from("clinic_staff").insert({
     user_id: created.user.id,
     clinic_id: me.clinic_id,
-    role,
-    doctor_id: role === "doctor" ? doctorId : null,
-    permissions,
+    role: dbRole,
+    doctor_id: dbRole === "doctor" ? doctorId : null,
+    permissions: perms,
   });
 
   if (staffErr) {
