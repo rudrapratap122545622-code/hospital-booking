@@ -26,11 +26,17 @@ export function Sidebar() {
   const clinic = useClinic((s) => s.clinic);
   const loaded = useClinic((s) => s.loaded);
 
-  // If the role is 'owner', they get everything. 
-  // If they are 'receptionist' or 'doctor', they get filtered by their permissions.
-  const visible = role === "owner"
-    ? NAV
-    : NAV.filter((n) => n.permission !== "settings" && permissions.includes(n.permission));
+  // 1. Owners see everything.
+  // 2. Staff see what they have permission for.
+  // 3. SAFETY NET: If a staff member somehow has no permissions, give them Reception by default.
+  let visible = NAV;
+  if (role !== "owner") {
+    let allowed = permissions;
+    if (allowed.length === 0 && loaded) {
+      allowed = ["reception"]; // Fallback for broken DB rows
+    }
+    visible = NAV.filter((n) => n.permission !== "settings" && allowed.includes(n.permission));
+  }
 
   async function signOut() {
     const supabase = createClient();
@@ -74,13 +80,6 @@ export function Sidebar() {
             </Link>
           );
         })}
-        
-        {/* Only show the "No pages" text if we are done loading and still have nothing */}
-        {visible.length === 0 && loaded && (
-          <p className="px-3 py-2 text-xs text-danger">
-            No pages assigned. Ask the owner to grant access.
-          </p>
-        )}
       </nav>
 
       <div className="space-y-1 border-t border-line p-3">
@@ -112,7 +111,7 @@ export function Sidebar() {
   );
 }
 
-/* ---- Icons ---- */
+/* icons unchanged */
 
 function DashboardIcon() {
   return (
@@ -124,7 +123,6 @@ function DashboardIcon() {
     </svg>
   );
 }
-
 function StethoscopeIcon() {
   return (
     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
@@ -133,7 +131,6 @@ function StethoscopeIcon() {
     </svg>
   );
 }
-
 function SlidersIcon() {
   return (
     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
@@ -143,7 +140,6 @@ function SlidersIcon() {
     </svg>
   );
 }
-
 function ExternalIcon() {
   return (
     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
@@ -153,7 +149,6 @@ function ExternalIcon() {
     </svg>
   );
 }
-
 function SignOutIcon() {
   return (
     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
