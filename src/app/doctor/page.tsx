@@ -5,11 +5,13 @@ import { AppShell } from "@/components/layout/AppShell";
 import { Card } from "@/components/ui/Card";
 import { Badge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
+import { Dialog } from "@/components/ui/Dialog";
 import { DayPicker, todayIso } from "@/components/ui/DayPicker";
 import { useClinic, useEnsureLoaded } from "@/lib/store";
-import { createClient } from "@/lib/supabase/client";
 import type { QueueEntry, Shift } from "@/lib/types";
 import { cn } from "@/lib/utils";
+
+const DAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 
 export default function DoctorPage() {
   useEnsureLoaded();
@@ -24,11 +26,7 @@ export default function DoctorPage() {
   const doctor = useMemo(() => doctors.find((d) => d.id === (doctorId || doctors[0]?.id)), [doctors, doctorId]);
 
   if (!doctor) {
-    return (
-      <AppShell>
-        <p className="text-muted">No doctors configured. Add one in Settings.</p>
-      </AppShell>
-    );
+    return <AppShell><p className="text-muted">No doctors configured. Add one in Settings.</p></AppShell>;
   }
 
   return (
@@ -53,18 +51,30 @@ export default function DoctorPage() {
             <DayPicker days={7} value={day} onChange={setDay} className="mt-2" />
           </div>
         </div>
-        <QueueControls doctorId={doctor.id} />
+        <QueueControls doctorId={doctor.id} day={day} />
       </div>
       <DoctorWorkspace doctorId={doctor.id} day={day} />
     </AppShell>
   );
 }
 
-function QueueControls({ doctorId }: { doctorId: string }) {
+function QueueControls({ doctorId, day }: { doctorId: string; day: string }) {
+  const doctors = useClinic((s) => s.doctors);
   const paused = useClinic((s) => s.pausedDoctors.includes(doctorId));
   const pause = useClinic((s) => s.pauseQueue);
   const resume = useClinic((s) => s.resumeQueue);
+  const updateDoctor = useClinic((s) => s.updateDoctor);
+  
   const [loading, setLoading] = useState(false);
+  
+  // Shift Editor State
+  const [editShiftOpen, setEditShiftOpen] = useState(false);
+  const [editShifts, setEditShifts] = useState<Shift[]>([]);
+  const [savingShifts, setSavingShifts] = useState(false);
+
+  const doctor = doctors.find((d) => d.id === doctorId)!;
+  const dayOfWeek = new Date(day).getDay();
+  const shiftsForDay = useMemo(() => (doctor.workingHours[dayOfWeek] ?? []).slice().sort((a, b) => a.start.localeCompare(b.start)), [doctor, dayOfWeek]);
 
   async function toggle() {
     setLoading(true);
@@ -73,12 +83,43 @@ function QueueControls({ doctorId }: { doctorId: string }) {
     setLoading(false);
   }
 
+  async function saveShifts() {
+    setSavingShifts(true);
+    const newHours = { ...doctor.workingHours, [dayOfWeek]: editShifts };
+    await updateDoctor(doctor.id, { workingHours: newHours });
+    setSavingShifts(false);
+    setEditShiftOpen(false);
+  }
+
   return (
     <div className="flex items-center gap-2">
       {paused && <Badge tone="warn">Queue paused</Badge>}
+      <Button variant="ghost" onClick={() => { setEditShifts(shiftsForDay); setEditShiftOpen(true); }}>
+        Edit Shifts
+      </Button>
       <Button variant="ghost" onClick={toggle} isLoading={loading}>
         {paused ? "Resume queue" : "Pause queue"}
       </Button>
+
+      <Dialog open={editShiftOpen} onClose={() => setEditShiftOpen(false)} title={`Edit my shifts for ${DAYS[dayOfWeek]}`}>
+        <div className="space-y-4">
+          {editShifts.length === 0 && <p className="text-sm text-muted">No shifts today. Click "Add Shift" below.</p>}
+          {editShifts.map((s, idx) => (
+            <div key={idx} className="flex items-center gap-2">
+              <input type="time" value={s.start} onChange={(e) => setEditShifts(editShifts.map((x, i) => i === idx ? { ...x, start: e.target.value } : x))} className="rounded-lg border border-line bg-canvas px-2 py-1.5 text-sm text-ink outline-none" />
+              <span className="text-sm text-muted">to</span>
+              <input type="time" value={s.end} onChange={(e) => setEditShifts(editShifts.map((x, i) => i === idx ? { ...x, end: e.target.value } : x))} className="rounded-lg border border-line bg-canvas px-2 py-1.5 text-sm text-ink outline-none" />
+              <button type="button" onClick={() => setEditShifts(editShifts.filter((_, i) => i !== idx))} className="text-xs text-danger hover:underline">✕</button>
+            </div>
+          ))}
+          <Button variant="ghost" size="sm" onClick={() => setEditShifts([...editShifts, { start: "09:00", end: "13:00" }])}>+ Add Shift</Button>
+          
+          <div className="flex justify-end gap-2 pt-4">
+            <Button variant="ghost" onClick={() => setEditShiftOpen(false)}>Cancel</Button>
+            <Button onClick={saveShifts} isLoading={savingShifts}>Save Shifts</Button>
+          </div>
+        </div>
+      </Dialog>
     </div>
   );
 }
@@ -89,7 +130,6 @@ function DoctorWorkspace({ doctorId, day }: { doctorId: string; day: string }) {
   const paused = useClinic((s) => s.pausedDoctors.includes(doctorId));
   const callNext = useClinic((s) => s.callNext);
   const complete = useClinic((s) => s.completeConsultation);
-  const load = useClinic((s) => s.load);
 
   const [calling, setCalling] = useState(false);
   const [completing, setCompleting] = useState(false);
@@ -115,15 +155,6 @@ function DoctorWorkspace({ doctorId, day }: { doctorId: string; day: string }) {
 
   async function handleCallNext() { setCalling(true); await callNext(doctorId); setCalling(false); }
   async function handleComplete() { if (!current) return; setCompleting(true); await complete(current.id); setCompleting(false); }
-
-  async function changePatientShift(patientId: string, newShift: string, endTime: string) {
-    const supabase = createClient();
-    await supabase.from("queue_entries").update({
-      shift_start: newShift,
-      shift_end: endTime,
-    }).eq("id", patientId);
-    await load();
-  }
 
   return (
     <div className="space-y-6">
@@ -177,26 +208,7 @@ function DoctorWorkspace({ doctorId, day }: { doctorId: string; day: string }) {
                 <div className="min-w-0">
                   <p className="truncate text-sm"><span className="text-muted">#{q.tokenNumber}</span> {q.patientName}</p>
                 </div>
-                <div className="flex items-center gap-4">
-                  <div className="flex items-center gap-1.5">
-                    <span className="text-[10px] uppercase text-muted">Shift:</span>
-                    <select
-                      value={`${q.shiftStart}-${q.shiftEnd}`}
-                      onChange={(e) => {
-                        const [newStart, newEnd] = e.target.value.split("-");
-                        changePatientShift(q.id, newStart, newEnd);
-                      }}
-                      className="rounded border border-line bg-surface px-1.5 py-0.5 text-[11px] text-ink outline-none"
-                    >
-                      {shiftsForDay.map((s) => (
-                        <option key={`${s.start}-${s.end}`} value={`${s.start}-${s.end}`}>
-                          {shiftLabel(s)}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-                  <Badge tone="muted">{q.arrivalType === "walk_in" ? "Walk-in" : "Appointment"}</Badge>
-                </div>
+                <Badge tone="muted">{q.arrivalType === "walk_in" ? "Walk-in" : "Appointment"}</Badge>
               </div>
             ))}
             {waiting.length === 0 && <p className="py-4 text-sm text-muted">Queue is empty.</p>}
@@ -214,7 +226,6 @@ function ShiftTab({ label, count, active, onClick }: { label: string; count: num
     </button>
   );
 }
-
 function shiftKeyOf(e: QueueEntry): string { return `${e.shiftStart}-${e.shiftEnd}`; }
 function shiftLabel(s: Shift): string { return `${format12(s.start)} – ${format12(s.end)}`; }
 function format12(hhmm: string): string { const [h, m] = hhmm.split(":").map(Number); const period = h < 12 ? "AM" : "PM"; const hour12 = h % 12 === 0 ? 12 : h % 12; return m === 0 ? `${hour12} ${period}` : `${hour12}:${String(m).padStart(2, "0")} ${period}`; }

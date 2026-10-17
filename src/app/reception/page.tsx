@@ -8,9 +8,10 @@ import { Button } from "@/components/ui/Button";
 import { Dialog } from "@/components/ui/Dialog";
 import { DayPicker, todayIso } from "@/components/ui/DayPicker";
 import { useClinic, useEnsureLoaded } from "@/lib/store";
-import { createClient } from "@/lib/supabase/client";
 import type { Doctor, QueueEntry, Shift } from "@/lib/types";
 import { cn } from "@/lib/utils";
+
+const DAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 
 export default function ReceptionPage() {
   useEnsureLoaded();
@@ -74,12 +75,16 @@ function QueueCard({ doctor, day }: { doctor: Doctor; day: string }) {
   const appointments = useClinic((s) => s.appointments);
   const paused = useClinic((s) => s.pausedDoctors.includes(doctor.id));
   const addWalkIn = useClinic((s) => s.addWalkIn);
-  const load = useClinic((s) => s.load);
+  const updateDoctor = useClinic((s) => s.updateDoctor);
 
   const [shiftKey, setShiftKey] = useState<string | null>(null);
   const [open, setOpen] = useState(false);
   const [name, setName] = useState("");
   const [saving, setSaving] = useState(false);
+
+  // Shift Editor Modal
+  const [shiftOpen, setShiftOpen] = useState(false);
+  const [editShifts, setEditShifts] = useState<Shift[]>([]);
 
   const dayOfWeek = new Date(day).getDay();
   const shiftsForDay = useMemo(() => (doctor.workingHours[dayOfWeek] ?? []).slice().sort((a, b) => a.start.localeCompare(b.start)), [doctor, dayOfWeek]);
@@ -103,17 +108,13 @@ function QueueCard({ doctor, day }: { doctor: Doctor; day: string }) {
     setSaving(true);
     await addWalkIn(name.trim(), doctor.id);
     setSaving(false);
-    setName("");
-    setOpen(false);
+    setName(""); setOpen(false);
   }
 
-  async function changePatientShift(patientId: string, newShift: string, endTime: string) {
-    const supabase = createClient();
-    await supabase.from("queue_entries").update({
-      shift_start: newShift,
-      shift_end: endTime,
-    }).eq("id", patientId);
-    await load();
+  async function saveShifts() {
+    const newHours = { ...doctor.workingHours, [dayOfWeek]: editShifts };
+    await updateDoctor(doctor.id, { workingHours: newHours });
+    setShiftOpen(false);
   }
 
   return (
@@ -126,6 +127,7 @@ function QueueCard({ doctor, day }: { doctor: Doctor; day: string }) {
         <div className="flex shrink-0 items-center gap-2">
           {paused && <Badge tone="warn">Paused</Badge>}
           <Badge tone="muted">{completedCount} done</Badge>
+          <Button variant="ghost" className="h-7 px-2.5 text-xs" onClick={() => { setEditShifts(shiftsForDay); setShiftOpen(true); }}>Edit Shifts</Button>
           <Button variant="ghost" className="h-7 px-2.5 text-xs" onClick={() => setOpen(true)}>+ Walk-in</Button>
         </div>
       </div>
@@ -161,7 +163,6 @@ function QueueCard({ doctor, day }: { doctor: Doctor; day: string }) {
           <div className="mt-2">
             <p className="text-xs text-muted">#{current.tokenNumber} · {shiftLabel({ start: current.shiftStart, end: current.shiftEnd })}</p>
             <p className="truncate text-base font-medium">{current.patientName}</p>
-            <p className="truncate text-xs text-muted">{current.patientPhone ?? "No phone on file"}</p>
           </div>
         ) : (
           <p className="mt-2 text-sm text-muted">No one yet.</p>
@@ -172,49 +173,51 @@ function QueueCard({ doctor, day }: { doctor: Doctor; day: string }) {
         <p className="text-xs uppercase tracking-wide text-muted">Waiting ({waiting.length})</p>
         <div className="mt-3 space-y-2">
           {waiting.map((q) => (
-            <div key={q.id} className="flex flex-col gap-2 rounded-lg bg-elevated px-3 py-2">
-              <div className="flex items-center justify-between gap-2">
-                <div className="min-w-0">
-                  <p className="truncate text-sm"><span className="text-muted">#{q.tokenNumber}</span> {q.patientName}</p>
-                  <p className="truncate text-[11px] text-muted">{q.patientPhone ?? "No phone"}</p>
-                </div>
-                <Badge tone="muted">{q.arrivalType === "walk_in" ? "Walk-in" : "Apt."}</Badge>
+            <div key={q.id} className="flex items-center justify-between gap-2 rounded-lg bg-elevated px-3 py-2">
+              <div className="min-w-0">
+                <p className="truncate text-sm"><span className="text-muted">#{q.tokenNumber}</span> {q.patientName}</p>
+                <p className="truncate text-[11px] text-muted">{shiftLabel({ start: q.shiftStart, end: q.shiftEnd })}</p>
               </div>
-              <div className="flex items-center gap-2 border-t border-line pt-2">
-                <span className="text-[10px] uppercase text-muted">Shift:</span>
-                <select
-                  value={`${q.shiftStart}-${q.shiftEnd}`}
-                  onChange={(e) => {
-                    const [newStart, newEnd] = e.target.value.split("-");
-                    changePatientShift(q.id, newStart, newEnd);
-                  }}
-                  className="rounded border border-line bg-surface px-1.5 py-0.5 text-[11px] text-ink outline-none"
-                >
-                  {shiftsForDay.map((s) => (
-                    <option key={`${s.start}-${s.end}`} value={`${s.start}-${s.end}`}>
-                      {shiftLabel(s)}
-                    </option>
-                  ))}
-                </select>
-              </div>
+              <Badge tone="muted">{q.arrivalType === "walk_in" ? "Walk-in" : "Apt."}</Badge>
             </div>
           ))}
-          {waiting.length === 0 && <p className="text-sm text-muted">{shiftKey ? "No one waiting in this shift." : "Queue is empty."}</p>}
+          {waiting.length === 0 && <p className="text-sm text-muted">Queue is empty.</p>}
         </div>
       </div>
 
+      {/* WALK-IN DIALOG */}
       <Dialog open={open} onClose={() => setOpen(false)} title="Add walk-in">
         <form onSubmit={submitWalkIn} className="space-y-4">
           <div>
             <label className="text-xs font-medium text-muted">Patient name</label>
-            <input autoFocus value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Priya Menon" className="mt-1 w-full rounded-lg border border-line bg-elevated px-3 py-2 text-sm text-ink outline-none focus:border-accent" />
-            <p className="mt-2 text-xs text-muted">Added to {doctor.name}'s current shift.</p>
+            <input autoFocus value={name} onChange={(e) => setName(e.target.value)} className="mt-1 w-full rounded-lg border border-line bg-elevated px-3 py-2 text-sm text-ink outline-none focus:border-accent" />
           </div>
           <div className="flex justify-end gap-2">
             <Button type="button" variant="ghost" onClick={() => setOpen(false)}>Cancel</Button>
             <Button type="submit" isLoading={saving} disabled={!name.trim()}>Add to queue</Button>
           </div>
         </form>
+      </Dialog>
+
+      {/* EDIT SHIFTS DIALOG */}
+      <Dialog open={shiftOpen} onClose={() => setShiftOpen(false)} title={`Edit ${doctor.name}'s shifts for ${DAYS[dayOfWeek]}`}>
+        <div className="space-y-4">
+          {editShifts.length === 0 && <p className="text-sm text-muted">No shifts today. Click "Add Shift" below.</p>}
+          {editShifts.map((s, idx) => (
+            <div key={idx} className="flex items-center gap-2">
+              <input type="time" value={s.start} onChange={(e) => setEditShifts(editShifts.map((x, i) => i === idx ? { ...x, start: e.target.value } : x))} className="rounded-lg border border-line bg-canvas px-2 py-1.5 text-sm" />
+              <span className="text-sm text-muted">to</span>
+              <input type="time" value={s.end} onChange={(e) => setEditShifts(editShifts.map((x, i) => i === idx ? { ...x, end: e.target.value } : x))} className="rounded-lg border border-line bg-canvas px-2 py-1.5 text-sm" />
+              <button type="button" onClick={() => setEditShifts(editShifts.filter((_, i) => i !== idx))} className="text-xs text-danger">✕</button>
+            </div>
+          ))}
+          <Button variant="ghost" size="sm" onClick={() => setEditShifts([...editShifts, { start: "09:00", end: "13:00" }])}>+ Add Shift</Button>
+          
+          <div className="flex justify-end gap-2 pt-4">
+            <Button variant="ghost" onClick={() => setShiftOpen(false)}>Cancel</Button>
+            <Button onClick={saveShifts}>Save Shifts</Button>
+          </div>
+        </div>
       </Dialog>
     </Card>
   );
@@ -227,23 +230,15 @@ function ShiftTab({ label, count, active, onClick }: { label: string; count: num
     </button>
   );
 }
-
 function Metric({ label, value }: { label: string; value: number }) {
-  return (
-    <Card>
-      <p className="text-xs font-medium tracking-wide text-muted uppercase">{label}</p>
-      <p className="mt-3 text-3xl font-semibold tabular-nums">{value}</p>
-    </Card>
-  );
+  return <Card><p className="text-xs font-medium tracking-wide text-muted uppercase">{label}</p><p className="mt-3 text-3xl font-semibold tabular-nums">{value}</p></Card>;
 }
-
 function CheckInButton({ appointmentId }: { appointmentId: string }) {
   const checkIn = useClinic((s) => s.checkIn);
   const [loading, setLoading] = useState(false);
   async function handleClick() { setLoading(true); await checkIn(appointmentId); setLoading(false); }
   return <Button size="sm" className="shrink-0" onClick={handleClick} isLoading={loading}>Check in</Button>;
 }
-
 function hhmmOf(iso: string): string { const d = new Date(iso); return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`; }
 function shiftKeyOf(e: QueueEntry): string { return `${e.shiftStart}-${e.shiftEnd}`; }
 function shiftLabel(s: Shift): string { return `${format12(s.start)} – ${format12(s.end)}`; }
