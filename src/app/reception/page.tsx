@@ -57,14 +57,13 @@ export default function ReceptionPage() {
         </div>
 
         <div className="flex items-center gap-2">
-          <GlobalWalkIn doctors={doctors} />
           <Button
             variant="ghost"
             size="sm"
             onClick={refresh}
-            disabled={refreshing}
+            isLoading={refreshing}
           >
-            {refreshing ? "Refreshing…" : "↻ Refresh"}
+            ↻ Refresh
           </Button>
         </div>
       </div>
@@ -97,80 +96,20 @@ export default function ReceptionPage() {
 }
 
 // ---------------------------------------------------------
-// GLOBAL WALK-IN DIALOG
-// ---------------------------------------------------------
-function GlobalWalkIn({ doctors }: { doctors: Doctor[] }) {
-  const addWalkIn = useClinic((s) => s.addWalkIn);
-  const [open, setOpen] = useState(false);
-  const [name, setName] = useState("");
-  const [doctorId, setDoctorId] = useState(doctors[0]?.id ?? "");
-  const [saving, setSaving] = useState(false);
-
-  async function submit(e: React.FormEvent) {
-    e.preventDefault();
-    if (!name.trim() || !doctorId) return;
-    setSaving(true);
-    await addWalkIn(name.trim(), doctorId);
-    setSaving(false);
-    setName("");
-    setOpen(false);
-  }
-
-  return (
-    <>
-      <Button onClick={() => setOpen(true)} size="sm">
-        + Walk-in
-      </Button>
-      <Dialog open={open} onClose={() => setOpen(false)} title="Add walk-in">
-        <form onSubmit={submit} className="space-y-4">
-          <div>
-            <label className="text-xs font-medium text-muted">Patient name</label>
-            <input
-              autoFocus
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              placeholder="e.g. Priya Menon"
-              className="mt-1 w-full rounded-lg border border-line bg-elevated px-3 py-2 text-sm text-ink outline-none placeholder:text-muted focus:border-accent"
-            />
-          </div>
-          <div>
-            <label className="text-xs font-medium text-muted">Doctor</label>
-            <select
-              value={doctorId}
-              onChange={(e) => setDoctorId(e.target.value)}
-              className="mt-1 w-full rounded-lg border border-line bg-elevated px-3 py-2 text-sm text-ink outline-none focus:border-accent"
-            >
-              {doctors.map((d) => (
-                <option key={d.id} value={d.id}>
-                  {d.name} — {d.specialty}
-                </option>
-              ))}
-            </select>
-          </div>
-          <div className="flex justify-end gap-2">
-            <Button type="button" variant="ghost" onClick={() => setOpen(false)}>
-              Cancel
-            </Button>
-            <Button type="submit" disabled={saving || !name.trim() || !doctorId}>
-              {saving ? "Adding…" : "Add to queue"}
-            </Button>
-          </div>
-        </form>
-      </Dialog>
-    </>
-  );
-}
-
-// ---------------------------------------------------------
 // PER-DOCTOR QUEUE CARD
 // ---------------------------------------------------------
 function QueueCard({ doctor, day }: { doctor: Doctor; day: string }) {
   const queueEntries = useClinic((s) => s.queueEntries);
   const appointments = useClinic((s) => s.appointments);
   const paused = useClinic((s) => s.pausedDoctors.includes(doctor.id));
-  const checkIn = useClinic((s) => s.checkIn);
+  const addWalkIn = useClinic((s) => s.addWalkIn);
 
   const [shiftKey, setShiftKey] = useState<string | null>(null);
+  
+  // Walk-in state
+  const [open, setOpen] = useState(false);
+  const [name, setName] = useState("");
+  const [saving, setSaving] = useState(false);
 
   const dayOfWeek = new Date(day).getDay();
   const shiftsForDay = useMemo(
@@ -231,6 +170,17 @@ function QueueCard({ doctor, day }: { doctor: Doctor; day: string }) {
     [doctorEntries]
   );
 
+  async function submitWalkIn(e: React.FormEvent) {
+    e.preventDefault();
+    const trimmed = name.trim();
+    if (!trimmed) return;
+    setSaving(true);
+    await addWalkIn(trimmed, doctor.id);
+    setSaving(false);
+    setName("");
+    setOpen(false);
+  }
+
   return (
     <Card className="flex flex-col p-0">
       <div className="flex items-start justify-between gap-3 border-b border-line p-5">
@@ -241,6 +191,13 @@ function QueueCard({ doctor, day }: { doctor: Doctor; day: string }) {
         <div className="flex shrink-0 items-center gap-2">
           {paused && <Badge tone="warn">Paused</Badge>}
           <Badge tone="muted">{completedCount} done</Badge>
+          <Button
+            variant="ghost"
+            className="h-7 px-2.5 text-xs"
+            onClick={() => setOpen(true)}
+          >
+            + Walk-in
+          </Button>
         </div>
       </div>
 
@@ -265,9 +222,7 @@ function QueueCard({ doctor, day }: { doctor: Doctor; day: string }) {
                     })}
                   </p>
                 </div>
-                <Button size="sm" className="shrink-0" onClick={() => checkIn(a.id)}>
-                  Check in
-                </Button>
+                <CheckInButton appointmentId={a.id} />
               </div>
             ))}
           </div>
@@ -347,6 +302,32 @@ function QueueCard({ doctor, day }: { doctor: Doctor; day: string }) {
           )}
         </div>
       </div>
+
+      <Dialog open={open} onClose={() => setOpen(false)} title="Add walk-in">
+        <form onSubmit={submitWalkIn} className="space-y-4">
+          <div>
+            <label className="text-xs font-medium text-muted">Patient name</label>
+            <input
+              autoFocus
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              placeholder="e.g. Priya Menon"
+              className="mt-1 w-full rounded-lg border border-line bg-elevated px-3 py-2 text-sm text-ink outline-none placeholder:text-muted focus:border-accent"
+            />
+            <p className="mt-2 text-xs text-muted">
+              Will be added to {doctor.name}'s current shift.
+            </p>
+          </div>
+          <div className="flex justify-end gap-2">
+            <Button type="button" variant="ghost" onClick={() => setOpen(false)}>
+              Cancel
+            </Button>
+            <Button type="submit" isLoading={saving} disabled={!name.trim()}>
+              Add to queue
+            </Button>
+          </div>
+        </form>
+      </Dialog>
     </Card>
   );
 }
@@ -406,4 +387,22 @@ function format12(hhmm: string): string {
   return m === 0
     ? `${hour12} ${period}`
     : `${hour12}:${String(m).padStart(2, "0")} ${period}`;
+}
+
+// NEW: Isolated component just for the Check-in button loading state
+function CheckInButton({ appointmentId }: { appointmentId: string }) {
+  const checkIn = useClinic((s) => s.checkIn);
+  const [loading, setLoading] = useState(false);
+
+  async function handleClick() {
+    setLoading(true);
+    await checkIn(appointmentId);
+    setLoading(false);
+  }
+
+  return (
+    <Button size="sm" className="shrink-0" onClick={handleClick} isLoading={loading}>
+      Check in
+    </Button>
+  );
 }
