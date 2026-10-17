@@ -39,22 +39,20 @@ export default function SettingsPage() {
   const [staffEmail, setStaffEmail] = useState("");
   const [staffPassword, setStaffPassword] = useState("");
   const [staffName, setStaffName] = useState("");
-
-  // Only two roles: Owner (full access) or Staff (no Settings access)
-  const [staffRole, setStaffRole] = useState<StaffRole>("staff");
-  // Optional: link a Staff login to a doctor so they can see their patient queue
+  
+  // Database roles must be "receptionist" or "doctor"
+  const [staffRole, setStaffRole] = useState<StaffRole>("receptionist");
   const [staffDoctorId, setStaffDoctorId] = useState("");
   const [staffErr, setStaffErr] = useState<string | null>(null);
   const [staffSaving, setStaffSaving] = useState(false);
 
   const isOwner = currentRole === "owner";
 
-  // Only owners ever load the staff list
   useEffect(() => {
     if (isOwner) void loadStaff();
   }, [isOwner, loadStaff]);
 
-  // 🔐 THE LOCK: staff (or anyone who isn't the owner) can't see Settings at all
+  // THE LOCK: Block the whole page if not owner
   if (!clinic || !isOwner) {
     const stillLoading = !loaded || !clinic;
     return (
@@ -104,26 +102,22 @@ export default function SettingsPage() {
       setStaffErr("Password must be at least 6 characters.");
       return;
     }
+    if (staffRole === "doctor" && !staffDoctorId) {
+      setStaffErr("Pick which doctor this user is.");
+      return;
+    }
 
     setStaffSaving(true);
 
     // Auto-assign permissions based on role
-    let perms: PagePermission[];
-    if (staffRole === "owner") {
-      perms = ["reception", "doctor"];
-    } else if (staffDoctorId) {
-      perms = ["doctor"];
-    } else {
-      perms = ["reception"];
-    }
+    const perms: PagePermission[] = staffRole === "doctor" ? ["doctor"] : ["reception"];
 
     const res = await addStaff({
       email: staffEmail.trim(),
       password: staffPassword,
       fullName: staffName.trim(),
       role: staffRole,
-      doctorId:
-        staffRole === "staff" && staffDoctorId ? staffDoctorId : undefined,
+      doctorId: staffRole === "doctor" ? staffDoctorId : undefined,
       permissions: perms,
     });
 
@@ -136,7 +130,7 @@ export default function SettingsPage() {
     setStaffEmail("");
     setStaffPassword("");
     setStaffName("");
-    setStaffRole("staff");
+    setStaffRole("receptionist");
     setStaffDoctorId("");
     setStaffOpen(false);
   }
@@ -280,7 +274,7 @@ export default function SettingsPage() {
           <div className="flex items-start justify-between gap-3">
             <SectionHeader
               title="Staff Logins"
-              subtitle="Owners have full access. Staff can't open Settings."
+              subtitle="Create logins for receptionists and doctors."
             />
             <Button
               className="h-8 shrink-0 px-3 text-xs"
@@ -302,7 +296,7 @@ export default function SettingsPage() {
                   </p>
                   <p className="text-[11px] text-muted">
                     {s.email} · <span className="capitalize">{s.role}</span>
-                    {s.role === "staff" && s.doctorId && (
+                    {s.role === "doctor" && s.doctorId && (
                       <> · {doctors.find((d) => d.id === s.doctorId)?.name}</>
                     )}
                   </p>
@@ -397,35 +391,31 @@ export default function SettingsPage() {
           </div>
 
           <div>
-            <label className="text-xs font-medium text-muted">Role</label>
+            <label className="text-xs font-medium text-muted">What is their role?</label>
             <select
               value={staffRole}
-              onChange={(e) => {
-                const r = e.target.value as StaffRole;
-                setStaffRole(r);
-                if (r === "owner") setStaffDoctorId("");
-              }}
+              onChange={(e) => setStaffRole(e.target.value as StaffRole)}
               className="mt-1 w-full rounded-lg border border-line bg-elevated px-3 py-2 text-sm text-ink outline-none focus:border-accent"
             >
-              <option value="staff">Staff (Settings locked 🔐)</option>
-              <option value="owner">Owner (Full access)</option>
+              <option value="receptionist">Receptionist (Manages the front desk)</option>
+              <option value="doctor">Doctor (Manages their own queue)</option>
             </select>
           </div>
 
-          {staffRole === "staff" && (
+          {staffRole === "doctor" && (
             <div>
               <label className="text-xs font-medium text-muted">
-                Is this staff member a doctor? (optional)
+                Which doctor is this?
               </label>
               <select
                 value={staffDoctorId}
                 onChange={(e) => setStaffDoctorId(e.target.value)}
                 className="mt-1 w-full rounded-lg border border-line bg-elevated px-3 py-2 text-sm text-ink outline-none focus:border-accent"
               >
-                <option value="">No — front desk</option>
+                <option value="">— pick a doctor —</option>
                 {doctors.map((d) => (
                   <option key={d.id} value={d.id}>
-                    Yes — {d.name} ({d.specialty})
+                    {d.name} — {d.specialty}
                   </option>
                 ))}
               </select>
