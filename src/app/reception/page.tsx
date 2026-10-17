@@ -9,23 +9,16 @@ import { Dialog } from "@/components/ui/Dialog";
 import { DayPicker, todayIso } from "@/components/ui/DayPicker";
 import { useClinic, useEnsureLoaded } from "@/lib/store";
 import type { Doctor, QueueEntry, Shift } from "@/lib/types";
-import {
-  dateInTimeZone,
-  timeInTimeZone,
-  weekdayForCalendarDate,
-  cn,
-} from "@/lib/utils";
+import { cn } from "@/lib/utils";
 
 export default function ReceptionPage() {
   useEnsureLoaded();
   const appointments = useClinic((s) => s.appointments);
   const queueEntries = useClinic((s) => s.queueEntries);
   const doctors = useClinic((s) => s.doctors);
-  const timezone = useClinic((s) => s.clinic?.timezone);
   const load = useClinic((s) => s.load);
 
-  const [selectedDay, setSelectedDay] = useState<string | null>(null);
-  const day = selectedDay ?? todayIso(timezone);
+  const [day, setDay] = useState<string>(todayIso());
   const [refreshing, setRefreshing] = useState(false);
 
   async function refresh() {
@@ -39,13 +32,8 @@ export default function ReceptionPage() {
     [queueEntries, day]
   );
   const dayAppointments = useMemo(
-    () =>
-      timezone
-        ? appointments.filter(
-            (a) => dateInTimeZone(new Date(a.scheduledAt), timezone) === day
-          )
-        : [],
-    [appointments, day, timezone]
+    () => appointments.filter((a) => a.scheduledAt.slice(0, 10) === day),
+    [appointments, day]
   );
 
   const stats = useMemo(
@@ -65,23 +53,20 @@ export default function ReceptionPage() {
           <p className="text-xs font-medium tracking-wide text-muted uppercase">
             Date
           </p>
-          <DayPicker
-            days={7}
-            value={day}
-            onChange={setSelectedDay}
-            timezone={timezone}
-            className="mt-2"
-          />
+          <DayPicker days={7} value={day} onChange={setDay} className="mt-2" />
         </div>
 
-        <Button
-          variant="ghost"
-          size="sm"
-          onClick={refresh}
-          disabled={refreshing}
-        >
-          {refreshing ? "Refreshing…" : "↻ Refresh"}
-        </Button>
+        <div className="flex items-center gap-2">
+          <GlobalWalkIn doctors={doctors} />
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={refresh}
+            disabled={refreshing}
+          >
+            {refreshing ? "Refreshing…" : "↻ Refresh"}
+          </Button>
+        </div>
       </div>
 
       <div className="mt-6 grid grid-cols-2 gap-4 lg:grid-cols-4">
@@ -94,7 +79,7 @@ export default function ReceptionPage() {
       <div className="mt-10">
         <h2 className="text-lg font-medium">Live queues</h2>
         <p className="mt-1 text-sm text-muted">
-          Check in booked patients so they join the doctor&apos;s queue.
+          Check in booked patients so they join the doctor's queue.
         </p>
         <div className="mt-5 grid gap-6 lg:grid-cols-2">
           {doctors.map((d) => (
@@ -111,19 +96,83 @@ export default function ReceptionPage() {
   );
 }
 
+// ---------------------------------------------------------
+// GLOBAL WALK-IN DIALOG
+// ---------------------------------------------------------
+function GlobalWalkIn({ doctors }: { doctors: Doctor[] }) {
+  const addWalkIn = useClinic((s) => s.addWalkIn);
+  const [open, setOpen] = useState(false);
+  const [name, setName] = useState("");
+  const [doctorId, setDoctorId] = useState(doctors[0]?.id ?? "");
+  const [saving, setSaving] = useState(false);
+
+  async function submit(e: React.FormEvent) {
+    e.preventDefault();
+    if (!name.trim() || !doctorId) return;
+    setSaving(true);
+    await addWalkIn(name.trim(), doctorId);
+    setSaving(false);
+    setName("");
+    setOpen(false);
+  }
+
+  return (
+    <>
+      <Button onClick={() => setOpen(true)} size="sm">
+        + Walk-in
+      </Button>
+      <Dialog open={open} onClose={() => setOpen(false)} title="Add walk-in">
+        <form onSubmit={submit} className="space-y-4">
+          <div>
+            <label className="text-xs font-medium text-muted">Patient name</label>
+            <input
+              autoFocus
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              placeholder="e.g. Priya Menon"
+              className="mt-1 w-full rounded-lg border border-line bg-elevated px-3 py-2 text-sm text-ink outline-none placeholder:text-muted focus:border-accent"
+            />
+          </div>
+          <div>
+            <label className="text-xs font-medium text-muted">Doctor</label>
+            <select
+              value={doctorId}
+              onChange={(e) => setDoctorId(e.target.value)}
+              className="mt-1 w-full rounded-lg border border-line bg-elevated px-3 py-2 text-sm text-ink outline-none focus:border-accent"
+            >
+              {doctors.map((d) => (
+                <option key={d.id} value={d.id}>
+                  {d.name} — {d.specialty}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div className="flex justify-end gap-2">
+            <Button type="button" variant="ghost" onClick={() => setOpen(false)}>
+              Cancel
+            </Button>
+            <Button type="submit" disabled={saving || !name.trim() || !doctorId}>
+              {saving ? "Adding…" : "Add to queue"}
+            </Button>
+          </div>
+        </form>
+      </Dialog>
+    </>
+  );
+}
+
+// ---------------------------------------------------------
+// PER-DOCTOR QUEUE CARD
+// ---------------------------------------------------------
 function QueueCard({ doctor, day }: { doctor: Doctor; day: string }) {
   const queueEntries = useClinic((s) => s.queueEntries);
   const appointments = useClinic((s) => s.appointments);
   const paused = useClinic((s) => s.pausedDoctors.includes(doctor.id));
-  const addWalkIn = useClinic((s) => s.addWalkIn);
   const checkIn = useClinic((s) => s.checkIn);
 
   const [shiftKey, setShiftKey] = useState<string | null>(null);
-  const [open, setOpen] = useState(false);
-  const [name, setName] = useState("");
 
-  const timezone = useClinic((s) => s.clinic?.timezone);
-  const dayOfWeek = weekdayForCalendarDate(day);
+  const dayOfWeek = new Date(day).getDay();
   const shiftsForDay = useMemo(
     () =>
       (doctor.workingHours[dayOfWeek] ?? [])
@@ -143,15 +192,14 @@ function QueueCard({ doctor, day }: { doctor: Doctor; day: string }) {
         .filter(
           (a) =>
             a.doctorId === doctor.id &&
-            !!timezone &&
-            dateInTimeZone(new Date(a.scheduledAt), timezone) === day &&
+            a.scheduledAt.slice(0, 10) === day &&
             a.status === "booked"
         )
         .sort(
           (a, b) =>
             new Date(a.scheduledAt).getTime() - new Date(b.scheduledAt).getTime()
         ),
-    [appointments, doctor.id, day, timezone]
+    [appointments, doctor.id, day]
   );
 
   const current = useMemo(
@@ -183,15 +231,6 @@ function QueueCard({ doctor, day }: { doctor: Doctor; day: string }) {
     [doctorEntries]
   );
 
-  async function submit(e: React.FormEvent) {
-    e.preventDefault();
-    const trimmed = name.trim();
-    if (!trimmed) return;
-    await addWalkIn(trimmed, doctor.id);
-    setName("");
-    setOpen(false);
-  }
-
   return (
     <Card className="flex flex-col p-0">
       <div className="flex items-start justify-between gap-3 border-b border-line p-5">
@@ -202,13 +241,6 @@ function QueueCard({ doctor, day }: { doctor: Doctor; day: string }) {
         <div className="flex shrink-0 items-center gap-2">
           {paused && <Badge tone="warn">Paused</Badge>}
           <Badge tone="muted">{completedCount} done</Badge>
-          <Button
-            variant="ghost"
-            className="h-7 px-2.5 text-xs"
-            onClick={() => setOpen(true)}
-          >
-            + Walk-in
-          </Button>
         </div>
       </div>
 
@@ -228,9 +260,7 @@ function QueueCard({ doctor, day }: { doctor: Doctor; day: string }) {
                   <p className="truncate text-[11px] text-muted">
                     {a.patientPhone} ·{" "}
                     {shiftLabel({
-                      start: timezone
-                        ? timeInTimeZone(new Date(a.scheduledAt), timezone)
-                        : "",
+                      start: hhmmOf(a.scheduledAt),
                       end: a.shiftEnd,
                     })}
                   </p>
@@ -317,29 +347,6 @@ function QueueCard({ doctor, day }: { doctor: Doctor; day: string }) {
           )}
         </div>
       </div>
-
-      <Dialog open={open} onClose={() => setOpen(false)} title="Add walk-in">
-        <form onSubmit={submit} className="space-y-4">
-          <div>
-            <label className="text-xs font-medium text-muted">Patient name</label>
-            <input
-              autoFocus
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              placeholder="e.g. Priya Menon"
-              className="mt-1 w-full rounded-lg border border-line bg-elevated px-3 py-2 text-sm text-ink outline-none focus:border-accent"
-            />
-          </div>
-          <div className="flex justify-end gap-2">
-            <Button type="button" variant="ghost" onClick={() => setOpen(false)}>
-              Cancel
-            </Button>
-            <Button type="submit" disabled={!name.trim()}>
-              Add to queue
-            </Button>
-          </div>
-        </form>
-      </Dialog>
     </Card>
   );
 }
@@ -377,6 +384,11 @@ function Metric({ label, value }: { label: string; value: number }) {
       <p className="mt-3 text-3xl font-semibold tabular-nums">{value}</p>
     </Card>
   );
+}
+
+function hhmmOf(iso: string): string {
+  const d = new Date(iso);
+  return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
 }
 
 function shiftKeyOf(e: QueueEntry): string {
