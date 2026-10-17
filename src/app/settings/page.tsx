@@ -39,29 +39,40 @@ export default function SettingsPage() {
   const [staffEmail, setStaffEmail] = useState("");
   const [staffPassword, setStaffPassword] = useState("");
   const [staffName, setStaffName] = useState("");
-  
-  // SIMPLIFIED: Only Receptionist or Doctor
-  const [staffRole, setStaffRole] = useState<StaffRole>("receptionist");
+
+  // Only two roles: Owner (full access) or Staff (no Settings access)
+  const [staffRole, setStaffRole] = useState<StaffRole>("staff");
+  // Optional: link a Staff login to a doctor so they can see their patient queue
   const [staffDoctorId, setStaffDoctorId] = useState("");
   const [staffErr, setStaffErr] = useState<string | null>(null);
   const [staffSaving, setStaffSaving] = useState(false);
 
-  useEffect(() => {
-    void loadStaff();
-  }, [loadStaff]);
+  const isOwner = currentRole === "owner";
 
-  // THE LOCK: If not owner, block the page entirely
-  if (!clinic || currentRole !== "owner") {
+  // Only owners ever load the staff list
+  useEffect(() => {
+    if (isOwner) void loadStaff();
+  }, [isOwner, loadStaff]);
+
+  // 🔐 THE LOCK: staff (or anyone who isn't the owner) can't see Settings at all
+  if (!clinic || !isOwner) {
+    const stillLoading = !loaded || !clinic;
     return (
       <AppShell>
-        <div className="space-y-2">
-          <p className="text-sm text-muted">
-            {!loaded ? "Loading clinic…" : "Access denied."}
-          </p>
-          {storeError && <p className="text-xs text-danger">{storeError}</p>}
-          {loaded && currentRole !== "owner" && (
-            <p className="text-xs text-danger">Only the clinic owner can access Settings.</p>
+        <div className="mx-auto flex max-w-md flex-col items-center gap-3 py-20 text-center">
+          {stillLoading ? (
+            <p className="text-sm text-muted">Loading clinic…</p>
+          ) : (
+            <>
+              <div className="text-5xl">🔐</div>
+              <h1 className="text-base font-semibold">Settings are locked</h1>
+              <p className="text-sm text-muted">
+                Only the clinic owner can access Settings. Ask your owner if you
+                need something changed.
+              </p>
+            </>
           )}
+          {storeError && <p className="text-xs text-danger">{storeError}</p>}
         </div>
       </AppShell>
     );
@@ -84,7 +95,7 @@ export default function SettingsPage() {
   async function submitStaff(e: React.FormEvent) {
     e.preventDefault();
     setStaffErr(null);
-    
+
     if (!staffEmail.trim() || !staffPassword.trim() || !staffName.trim()) {
       setStaffErr("All fields are required.");
       return;
@@ -93,25 +104,29 @@ export default function SettingsPage() {
       setStaffErr("Password must be at least 6 characters.");
       return;
     }
-    if (staffRole === "doctor" && !staffDoctorId) {
-      setStaffErr("Pick which doctor this user is.");
-      return;
-    }
 
     setStaffSaving(true);
-    
+
     // Auto-assign permissions based on role
-    const perms: PagePermission[] = staffRole === "doctor" ? ["doctor"] : ["reception"];
+    let perms: PagePermission[];
+    if (staffRole === "owner") {
+      perms = ["reception", "doctor"];
+    } else if (staffDoctorId) {
+      perms = ["doctor"];
+    } else {
+      perms = ["reception"];
+    }
 
     const res = await addStaff({
       email: staffEmail.trim(),
       password: staffPassword,
       fullName: staffName.trim(),
       role: staffRole,
-      doctorId: staffRole === "doctor" ? staffDoctorId : undefined,
+      doctorId:
+        staffRole === "staff" && staffDoctorId ? staffDoctorId : undefined,
       permissions: perms,
     });
-    
+
     setStaffSaving(false);
 
     if (!res.ok) {
@@ -121,7 +136,7 @@ export default function SettingsPage() {
     setStaffEmail("");
     setStaffPassword("");
     setStaffName("");
-    setStaffRole("receptionist");
+    setStaffRole("staff");
     setStaffDoctorId("");
     setStaffOpen(false);
   }
@@ -231,10 +246,10 @@ export default function SettingsPage() {
                       />
                     </Field>
                   </div>
-                  <RemoveDoctorButton 
-                    id={d.id} 
-                    name={d.name} 
-                    onRemove={removeDoctor} 
+                  <RemoveDoctorButton
+                    id={d.id}
+                    name={d.name}
+                    onRemove={removeDoctor}
                   />
                 </div>
                 <p className="mt-5 text-xs uppercase tracking-wide text-muted">
@@ -265,7 +280,7 @@ export default function SettingsPage() {
           <div className="flex items-start justify-between gap-3">
             <SectionHeader
               title="Staff Logins"
-              subtitle="Create logins for receptionists and doctors."
+              subtitle="Owners have full access. Staff can't open Settings."
             />
             <Button
               className="h-8 shrink-0 px-3 text-xs"
@@ -287,15 +302,15 @@ export default function SettingsPage() {
                   </p>
                   <p className="text-[11px] text-muted">
                     {s.email} · <span className="capitalize">{s.role}</span>
-                    {s.role === "doctor" && s.doctorId && (
+                    {s.role === "staff" && s.doctorId && (
                       <> · {doctors.find((d) => d.id === s.doctorId)?.name}</>
                     )}
                   </p>
                 </div>
-                <RemoveStaffButton 
-                  id={s.id} 
-                  name={s.fullName || s.email} 
-                  onRemove={removeStaff} 
+                <RemoveStaffButton
+                  id={s.id}
+                  name={s.fullName || s.email}
+                  onRemove={removeStaff}
                 />
               </div>
             ))}
@@ -348,7 +363,7 @@ export default function SettingsPage() {
         </form>
       </Dialog>
 
-      {/* ADD STAFF DIALOG (SIMPLIFIED) */}
+      {/* ADD STAFF DIALOG */}
       <Dialog open={staffOpen} onClose={() => setStaffOpen(false)} title="Add staff login">
         <form onSubmit={submitStaff} className="space-y-4">
           <div>
@@ -382,31 +397,35 @@ export default function SettingsPage() {
           </div>
 
           <div>
-            <label className="text-xs font-medium text-muted">What is their role?</label>
+            <label className="text-xs font-medium text-muted">Role</label>
             <select
               value={staffRole}
-              onChange={(e) => setStaffRole(e.target.value as StaffRole)}
+              onChange={(e) => {
+                const r = e.target.value as StaffRole;
+                setStaffRole(r);
+                if (r === "owner") setStaffDoctorId("");
+              }}
               className="mt-1 w-full rounded-lg border border-line bg-elevated px-3 py-2 text-sm text-ink outline-none focus:border-accent"
             >
-              <option value="receptionist">Receptionist (Front desk)</option>
-              <option value="doctor">Doctor (Patient queue)</option>
+              <option value="staff">Staff (Settings locked 🔐)</option>
+              <option value="owner">Owner (Full access)</option>
             </select>
           </div>
 
-          {staffRole === "doctor" && (
+          {staffRole === "staff" && (
             <div>
               <label className="text-xs font-medium text-muted">
-                Which doctor is this?
+                Is this staff member a doctor? (optional)
               </label>
               <select
                 value={staffDoctorId}
                 onChange={(e) => setStaffDoctorId(e.target.value)}
                 className="mt-1 w-full rounded-lg border border-line bg-elevated px-3 py-2 text-sm text-ink outline-none focus:border-accent"
               >
-                <option value="">— pick a doctor —</option>
+                <option value="">No — front desk</option>
                 {doctors.map((d) => (
                   <option key={d.id} value={d.id}>
-                    {d.name} — {d.specialty}
+                    Yes — {d.name} ({d.specialty})
                   </option>
                 ))}
               </select>
@@ -556,9 +575,9 @@ function ShiftsRow({
                   <option key={t} value={t}>{t}</option>
                 ))}
               </select>
-              
+
               <span className="text-xs text-muted">to</span>
-              
+
               <select
                 value={s.end}
                 onChange={(e) => updateShift(i, { end: e.target.value })}
@@ -568,7 +587,7 @@ function ShiftsRow({
                   <option key={t} value={t}>{t}</option>
                 ))}
               </select>
-              
+
               <button
                 type="button"
                 onClick={() => removeShift(i)}

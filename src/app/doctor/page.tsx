@@ -16,7 +16,9 @@ export default function DoctorPage() {
   const currentRole = useClinic((s) => s.currentRole);
   const currentDoctorId = useClinic((s) => s.currentDoctorId);
 
-  const isDoctor = currentRole === "doctor" && !!currentDoctorId;
+  // A staff login linked to a doctor is locked to that doctor's queue.
+  // Owners (and unlinked staff) can pick which doctor to view.
+  const isDoctor = currentRole === "staff" && !!currentDoctorId;
   const [doctorId, setDoctorId] = useState<string>(
     isDoctor ? currentDoctorId! : doctors[0]?.id ?? ""
   );

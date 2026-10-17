@@ -10,7 +10,7 @@ export type ArrivalType = "appointment" | "walk_in";
 export type QueueEventType = "created" | "called" | "started" | "completed" | "skipped";
 
 export type PagePermission = "reception" | "appointments" | "doctor" | "settings";
-export type StaffRole = "owner" | "receptionist" | "doctor";
+export type StaffRole = "owner" | "staff";
 
 export interface Shift {
   start: string;
