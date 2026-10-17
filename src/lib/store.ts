@@ -396,85 +396,76 @@ export const useClinic = create<ClinicStore>((set, get) => ({
   },
 
   async callNext(doctorId) {
-    const { pausedDoctors, queueEntries } = get();
-    if (pausedDoctors.includes(doctorId)) return;
-    const busy = queueEntries.some(
-      (e) => e.doctorId === doctorId && e.status === "in_consultation"
-    );
-    if (busy) return;
-    const next = queueEntries.find(
-      (e) => e.doctorId === doctorId && e.status === "waiting"
-    );
-    if (!next) return;
-
     const supabase = createClient();
+    const { pausedDoctors } = get();
+    if (pausedDoctors.includes(doctorId)) return;
+
+    // 1. Fetch the absolute latest state from the DB to find the next waiting patient
+    const { data: currentList, error: fetchErr } = await supabase
+      .from("queue_entries")
+      .select("*")
+      .eq("doctor_id", doctorId)
+      .eq("status", "waiting")
+      .order("token_number", { ascending: true })
+      .limit(1);
+
+    if (fetchErr) {
+      alert("CALL NEXT FAILED (Fetch): " + fetchErr.message);
+      return;
+    }
+
+    if (!currentList || currentList.length === 0) {
+      alert("No patients waiting in the database for this doctor.");
+      return;
+    }
+
+    const nextPatient = currentList[0];
+
+    // 2. Update this specific patient to "in_consultation"
     const nowIso = new Date().toISOString();
-    
-    const { data, error } = await supabase
+    const { error: updateErr } = await supabase
       .from("queue_entries")
       .update({ status: "in_consultation", called_at: nowIso })
-      .eq("id", next.id)
-      .eq("status", "waiting")
-      .select("id")
-      .maybeSingle();
+      .eq("id", nextPatient.id);
 
-    if (error) {
-      alert("CALL NEXT FAILED (Update Queue): " + error.message);
-      set({ error: error.message });
-      return;
-    }
-    
-    if (!data) {
-      alert("CALL NEXT FAILED: Another user clicked first, or RLS blocked reading the updated row.");
+    if (updateErr) {
+      alert("CALL NEXT FAILED (Update): " + updateErr.message);
       return;
     }
 
-    const { error: eventErr } = await supabase.from("queue_events").insert({
-      queue_entry_id: next.id,
+    // 3. Log the event (ignore if this fails, so the UI still updates)
+    await supabase.from("queue_events").insert({
+      queue_entry_id: nextPatient.id,
       type: "called",
       actor_label: "Reception",
     });
 
-    if (eventErr) {
-      alert("CALL NEXT FAILED (Audit Log): " + eventErr.message);
-    }
-    
-    set((s) => ({
-      queueEntries: s.queueEntries.map((e) =>
-        e.id === next.id ? { ...e, status: "in_consultation", calledAt: nowIso } : e
-      ),
-    }));
+    // 4. Force a full reload of the store to update the UI instantly
+    await get().load();
   },
 
   async completeConsultation(queueEntryId) {
     const supabase = createClient();
     const nowIso = new Date().toISOString();
+    
     const { error } = await supabase
       .from("queue_entries")
       .update({ status: "completed", completed_at: nowIso })
       .eq("id", queueEntryId);
       
     if (error) {
-      alert("COMPLETE FAILED (Update Queue): " + error.message);
-      set({ error: error.message });
+      alert("COMPLETE FAILED: " + error.message);
       return;
     }
 
-    const { error: eventErr } = await supabase.from("queue_events").insert({
+    await supabase.from("queue_events").insert({
       queue_entry_id: queueEntryId,
       type: "completed",
       actor_label: "Doctor",
     });
 
-    if (eventErr) {
-      alert("COMPLETE FAILED (Audit Log): " + eventErr.message);
-    }
-
-    set((s) => ({
-      queueEntries: s.queueEntries.map((e) =>
-        e.id === queueEntryId ? { ...e, status: "completed", completedAt: nowIso } : e
-      ),
-    }));
+    // Force a full reload
+    await get().load();
   },
 
   async pauseQueue(doctorId) {
