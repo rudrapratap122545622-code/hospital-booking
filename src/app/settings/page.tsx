@@ -43,9 +43,6 @@ export default function SettingsPage() {
   // Simplified: default is receptionist
   const [staffRole, setStaffRole] = useState<StaffRole>("receptionist");
   const [staffDoctorId, setStaffDoctorId] = useState("");
-  
-  // Simplified: permissions are auto-set based on role
-  const [staffPerms, setStaffPerms] = useState<PagePermission[]>(["reception"]);
   const [staffErr, setStaffErr] = useState<string | null>(null);
   const [staffSaving, setStaffSaving] = useState(false);
 
@@ -84,17 +81,6 @@ export default function SettingsPage() {
     setAddDoctorOpen(false);
   }
 
-  // Handle role changes and auto-set permissions
-  function handleRoleChange(role: StaffRole) {
-    setStaffRole(role);
-    if (role === "receptionist") {
-      setStaffPerms(["reception"]);
-      setStaffDoctorId("");
-    } else if (role === "doctor") {
-      setStaffPerms(["doctor"]);
-    }
-  }
-
   async function submitStaff(e: React.FormEvent) {
     e.preventDefault();
     setStaffErr(null);
@@ -113,14 +99,19 @@ export default function SettingsPage() {
     }
 
     setStaffSaving(true);
+    
+    // Auto-assign permissions based on role
+    const perms: PagePermission[] = staffRole === "doctor" ? ["doctor"] : ["reception"];
+
     const res = await addStaff({
       email: staffEmail.trim(),
       password: staffPassword,
       fullName: staffName.trim(),
       role: staffRole,
       doctorId: staffRole === "doctor" ? staffDoctorId : undefined,
-      permissions: staffPerms,
+      permissions: perms,
     });
+    
     setStaffSaving(false);
 
     if (!res.ok) {
@@ -132,7 +123,6 @@ export default function SettingsPage() {
     setStaffName("");
     setStaffRole("receptionist");
     setStaffDoctorId("");
-    setStaffPerms(["reception"]);
     setStaffOpen(false);
   }
 
@@ -395,7 +385,7 @@ export default function SettingsPage() {
             <label className="text-xs font-medium text-muted">What is their role?</label>
             <select
               value={staffRole}
-              onChange={(e) => handleRoleChange(e.target.value as StaffRole)}
+              onChange={(e) => setStaffRole(e.target.value as StaffRole)}
               className="mt-1 w-full rounded-lg border border-line bg-elevated px-3 py-2 text-sm text-ink outline-none focus:border-accent"
             >
               <option value="receptionist">Receptionist (Manages the front desk)</option>
