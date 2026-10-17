@@ -84,8 +84,8 @@ function LoginInner() {
                 {error}
               </div>
             )}
-            <Button type="submit" disabled={loading} className="w-full">
-              {loading ? "Signing in…" : "Sign in"}
+            <Button type="submit" isLoading={loading} className="w-full">
+              Sign in
             </Button>
           </form>
         </Card>

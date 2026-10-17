@@ -8,31 +8,19 @@ import { Button } from "@/components/ui/Button";
 import { DayPicker, todayIso } from "@/components/ui/DayPicker";
 import { useClinic, useEnsureLoaded } from "@/lib/store";
 import type { QueueEntry, Shift } from "@/lib/types";
-import { weekdayForCalendarDate, cn } from "@/lib/utils";
+import { cn } from "@/lib/utils";
 
 export default function DoctorPage() {
   useEnsureLoaded();
   const doctors = useClinic((s) => s.doctors);
   const currentRole = useClinic((s) => s.currentRole);
   const currentDoctorId = useClinic((s) => s.currentDoctorId);
-  const timezone = useClinic((s) => s.clinic?.timezone);
-  const load = useClinic((s) => s.load);
 
-  // A user with role='doctor' is locked to their own row.
   const isDoctor = currentRole === "doctor" && !!currentDoctorId;
-
   const [doctorId, setDoctorId] = useState<string>(
     isDoctor ? currentDoctorId! : doctors[0]?.id ?? ""
   );
-  const [selectedDay, setSelectedDay] = useState<string | null>(null);
-  const day = selectedDay ?? todayIso(timezone);
-  const [refreshing, setRefreshing] = useState(false);
-
-  async function refresh() {
-    setRefreshing(true);
-    await load();
-    setRefreshing(false);
-  }
+  const [day, setDay] = useState<string>(todayIso());
 
   const doctor = useMemo(
     () => doctors.find((d) => d.id === (doctorId || doctors[0]?.id)),
@@ -81,27 +69,11 @@ export default function DoctorPage() {
             <p className="text-xs font-medium uppercase tracking-wide text-muted">
               Date
             </p>
-            <DayPicker
-              days={7}
-              value={day}
-              onChange={setSelectedDay}
-              timezone={timezone}
-              className="mt-2"
-            />
+            <DayPicker days={7} value={day} onChange={setDay} className="mt-2" />
           </div>
         </div>
 
-        <div className="flex items-center gap-2">
-          <QueueControls doctorId={doctor.id} />
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={refresh}
-            disabled={refreshing}
-          >
-            {refreshing ? "Refreshing…" : "↻ Refresh"}
-          </Button>
-        </div>
+        <QueueControls doctorId={doctor.id} />
       </div>
 
       <DoctorWorkspace doctorId={doctor.id} day={day} />
@@ -113,42 +85,41 @@ function QueueControls({ doctorId }: { doctorId: string }) {
   const paused = useClinic((s) => s.pausedDoctors.includes(doctorId));
   const pause = useClinic((s) => s.pauseQueue);
   const resume = useClinic((s) => s.resumeQueue);
+  const [loading, setLoading] = useState(false);
+
+  async function toggle() {
+    setLoading(true);
+    if (paused) await resume(doctorId);
+    else await pause(doctorId);
+    setLoading(false);
+  }
 
   return (
     <div className="flex items-center gap-2">
       {paused && <Badge tone="warn">Queue paused</Badge>}
-      <Button
-        variant="ghost"
-        onClick={() => (paused ? resume(doctorId) : pause(doctorId))}
-      >
+      <Button variant="ghost" onClick={toggle} isLoading={loading}>
         {paused ? "Resume queue" : "Pause queue"}
       </Button>
     </div>
   );
 }
 
-function DoctorWorkspace({
-  doctorId,
-  day,
-}: {
-  doctorId: string;
-  day: string;
-}) {
+function DoctorWorkspace({ doctorId, day }: { doctorId: string; day: string }) {
   const doctors = useClinic((s) => s.doctors);
   const queueEntries = useClinic((s) => s.queueEntries);
   const paused = useClinic((s) => s.pausedDoctors.includes(doctorId));
   const callNext = useClinic((s) => s.callNext);
   const complete = useClinic((s) => s.completeConsultation);
 
+  const [calling, setCalling] = useState(false);
+  const [completing, setCompleting] = useState(false);
+
   const doctor = doctors.find((d) => d.id === doctorId)!;
   const [shiftKey, setShiftKey] = useState<string | null>(null);
 
-  const dayOfWeek = weekdayForCalendarDate(day);
+  const dayOfWeek = new Date(day).getDay();
   const shiftsForDay = useMemo(
-    () =>
-      (doctor.workingHours[dayOfWeek] ?? [])
-        .slice()
-        .sort((a, b) => a.start.localeCompare(b.start)),
+    () => (doctor.workingHours[dayOfWeek] ?? []).slice().sort((a, b) => a.start.localeCompare(b.start)),
     [doctor, dayOfWeek]
   );
 
@@ -163,10 +134,7 @@ function DoctorWorkspace({
   );
 
   const waitingAll = useMemo(
-    () =>
-      doctorEntries
-        .filter((e) => e.status === "waiting")
-        .sort((a, b) => a.tokenNumber - b.tokenNumber),
+    () => doctorEntries.filter((e) => e.status === "waiting").sort((a, b) => a.tokenNumber - b.tokenNumber),
     [doctorEntries]
   );
 
@@ -186,70 +154,50 @@ function DoctorWorkspace({
 
   const nextUp = waiting[0];
 
+  async function handleCallNext() {
+    setCalling(true);
+    await callNext(doctorId);
+    setCalling(false);
+  }
+
+  async function handleComplete() {
+    if (!current) return;
+    setCompleting(true);
+    await complete(current.id);
+    setCompleting(false);
+  }
+
   return (
     <div className="space-y-6">
       <div className="flex flex-wrap items-center gap-2">
-        <ShiftTab
-          label="All"
-          active={shiftKey === null}
-          count={waitingAll.length}
-          onClick={() => setShiftKey(null)}
-        />
+        <ShiftTab label="All" active={shiftKey === null} count={waitingAll.length} onClick={() => setShiftKey(null)} />
         {shiftsForDay.map((s) => {
           const key = `${s.start}-${s.end}`;
-          return (
-            <ShiftTab
-              key={key}
-              label={shiftLabel(s)}
-              active={shiftKey === key}
-              count={waitingPerShift.get(key) ?? 0}
-              onClick={() => setShiftKey(key)}
-            />
-          );
+          return <ShiftTab key={key} label={shiftLabel(s)} active={shiftKey === key} count={waitingPerShift.get(key) ?? 0} onClick={() => setShiftKey(key)} />;
         })}
       </div>
 
       <div className="grid gap-6 lg:grid-cols-3">
         <Card className="lg:col-span-2">
-          <p className="text-xs uppercase tracking-wide text-muted">
-            Current patient
-          </p>
+          <p className="text-xs uppercase tracking-wide text-muted">Current patient</p>
           {current ? (
             <>
               <p className="mt-2 text-xs text-muted">
-                #{current.tokenNumber} ·{" "}
-                {shiftLabel({ start: current.shiftStart, end: current.shiftEnd })}
+                #{current.tokenNumber} · {shiftLabel({ start: current.shiftStart, end: current.shiftEnd })}
               </p>
               <p className="text-2xl font-semibold">{current.patientName}</p>
               <div className="mt-6 flex flex-wrap gap-3">
-                <Button onClick={() => complete(current.id)}>Mark complete</Button>
+                <Button onClick={handleComplete} isLoading={completing}>Mark complete</Button>
               </div>
             </>
           ) : (
             <>
-              <p className="mt-3 text-2xl font-semibold text-muted">
-                No patient in consultation
-              </p>
+              <p className="mt-3 text-2xl font-semibold text-muted">No patient in consultation</p>
               <div className="mt-6 flex flex-wrap gap-3">
-                <Button
-                  onClick={() => callNext(doctorId)}
-                  disabled={paused || waiting.length === 0}
-                >
+                <Button onClick={handleCallNext} disabled={paused || waiting.length === 0} isLoading={calling}>
                   Call next patient
                 </Button>
               </div>
-              {paused && (
-                <p className="mt-3 text-xs text-muted">
-                  Queue is paused — resume it to call the next patient.
-                </p>
-              )}
-              {!paused && waiting.length === 0 && (
-                <p className="mt-3 text-xs text-muted">
-                  {shiftKey
-                    ? "No one waiting in this shift."
-                    : "No one waiting right now."}
-                </p>
-              )}
             </>
           )}
         </Card>
@@ -259,8 +207,7 @@ function DoctorWorkspace({
           {nextUp ? (
             <>
               <p className="mt-2 text-xs text-muted">
-                #{nextUp.tokenNumber} ·{" "}
-                {shiftLabel({ start: nextUp.shiftStart, end: nextUp.shiftEnd })}
+                #{nextUp.tokenNumber} · {shiftLabel({ start: nextUp.shiftStart, end: nextUp.shiftEnd })}
               </p>
               <p className="text-lg font-medium">{nextUp.patientName}</p>
               <Badge tone={nextUp.arrivalType === "walk_in" ? "warn" : "accent"}>
@@ -273,32 +220,19 @@ function DoctorWorkspace({
         </Card>
 
         <Card className="lg:col-span-3">
-          <p className="text-xs uppercase tracking-wide text-muted">
-            Waiting ({waiting.length})
-          </p>
+          <p className="text-xs uppercase tracking-wide text-muted">Waiting ({waiting.length})</p>
           <div className="mt-3 divide-y divide-line">
             {waiting.map((q) => (
-              <div
-                key={q.id}
-                className="flex items-center justify-between gap-3 py-3"
-              >
+              <div key={q.id} className="flex items-center justify-between gap-3 py-3">
                 <div className="min-w-0">
                   <p className="truncate text-sm">
-                    <span className="text-muted">#{q.tokenNumber}</span>{" "}
-                    {q.patientName}
-                  </p>
-                  <p className="text-[11px] text-muted">
-                    {shiftLabel({ start: q.shiftStart, end: q.shiftEnd })}
+                    <span className="text-muted">#{q.tokenNumber}</span> {q.patientName}
                   </p>
                 </div>
-                <Badge tone="muted">
-                  {q.arrivalType === "walk_in" ? "Walk-in" : "Appointment"}
-                </Badge>
+                <Badge tone="muted">{q.arrivalType === "walk_in" ? "Walk-in" : "Appointment"}</Badge>
               </div>
             ))}
-            {waiting.length === 0 && (
-              <p className="py-4 text-sm text-muted">Queue is empty.</p>
-            )}
+            {waiting.length === 0 && <p className="py-4 text-sm text-muted">Queue is empty.</p>}
           </div>
         </Card>
       </div>
@@ -306,43 +240,19 @@ function DoctorWorkspace({
   );
 }
 
-function ShiftTab({
-  label,
-  count,
-  active,
-  onClick,
-}: {
-  label: string;
-  count: number;
-  active: boolean;
-  onClick: () => void;
-}) {
+function ShiftTab({ label, count, active, onClick }: { label: string; count: number; active: boolean; onClick: () => void }) {
   return (
-    <button
-      onClick={onClick}
-      className={cn(
-        "rounded-full px-3 py-1 text-xs font-medium transition-colors",
-        active ? "bg-accent text-white" : "bg-elevated text-muted hover:text-ink"
-      )}
-    >
+    <button onClick={onClick} className={cn("rounded-full px-3 py-1 text-xs font-medium transition-colors", active ? "bg-accent text-white" : "bg-elevated text-muted hover:text-ink")}>
       {label} <span className="ml-1 opacity-70">({count})</span>
     </button>
   );
 }
 
-function shiftKeyOf(e: QueueEntry): string {
-  return `${e.shiftStart}-${e.shiftEnd}`;
-}
-
-function shiftLabel(s: Shift): string {
-  return `${format12(s.start)} – ${format12(s.end)}`;
-}
-
+function shiftKeyOf(e: QueueEntry): string { return `${e.shiftStart}-${e.shiftEnd}`; }
+function shiftLabel(s: Shift): string { return `${format12(s.start)} – ${format12(s.end)}`; }
 function format12(hhmm: string): string {
   const [h, m] = hhmm.split(":").map(Number);
   const period = h < 12 ? "AM" : "PM";
   const hour12 = h % 12 === 0 ? 12 : h % 12;
-  return m === 0
-    ? `${hour12} ${period}`
-    : `${hour12}:${String(m).padStart(2, "0")} ${period}`;
+  return m === 0 ? `${hour12} ${period}` : `${hour12}:${String(m).padStart(2, "0")} ${period}`;
 }

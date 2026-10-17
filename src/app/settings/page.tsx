@@ -11,13 +11,7 @@ import { cn } from "@/lib/utils";
 import type { PagePermission, Shift, StaffRole } from "@/lib/types";
 
 const DAYS = [
-  "Sunday",
-  "Monday",
-  "Tuesday",
-  "Wednesday",
-  "Thursday",
-  "Friday",
-  "Saturday",
+  "Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday",
 ];
 
 const PERMISSIONS: { id: PagePermission; label: string }[] = [
@@ -45,6 +39,7 @@ export default function SettingsPage() {
   const [addDoctorOpen, setAddDoctorOpen] = useState(false);
   const [newDoctorName, setNewDoctorName] = useState("");
   const [newDoctorSpecialty, setNewDoctorSpecialty] = useState("");
+  const [savingDoctor, setSavingDoctor] = useState(false);
 
   const [staffOpen, setStaffOpen] = useState(false);
   const [staffEmail, setStaffEmail] = useState("");
@@ -67,14 +62,7 @@ export default function SettingsPage() {
           <p className="text-sm text-muted">
             {loaded ? "Clinic not found." : "Loading clinic…"}
           </p>
-          {storeError && (
-            <p className="text-xs text-danger">{storeError}</p>
-          )}
-          {loaded && !storeError && (
-            <p className="text-xs text-muted">
-              Check Supabase: clinic_staff row for your user?
-            </p>
-          )}
+          {storeError && <p className="text-xs text-danger">{storeError}</p>}
         </div>
       </AppShell>
     );
@@ -91,10 +79,12 @@ export default function SettingsPage() {
   async function submitAddDoctor(e: React.FormEvent) {
     e.preventDefault();
     if (!newDoctorName.trim() || !newDoctorSpecialty.trim()) return;
+    setSavingDoctor(true);
     await addDoctor({
       name: newDoctorName.trim(),
       specialty: newDoctorSpecialty.trim(),
     });
+    setSavingDoctor(false);
     setNewDoctorName("");
     setNewDoctorSpecialty("");
     setAddDoctorOpen(false);
@@ -191,7 +181,7 @@ export default function SettingsPage() {
         <Card>
           <SectionHeader
             title="Opening hours"
-            subtitle="When the clinic is open. Add multiple shifts per day if you close midday."
+            subtitle="When the clinic is open."
           />
           <div className="mt-4 divide-y divide-line">
             {DAYS.map((day, i) => (
@@ -252,15 +242,11 @@ export default function SettingsPage() {
                       />
                     </Field>
                   </div>
-                  <Button
-                    variant="danger"
-                    className="h-8 shrink-0 px-3 text-xs"
-                    onClick={() => {
-                      if (confirm(`Remove ${d.name}?`)) removeDoctor(d.id);
-                    }}
-                  >
-                    Remove
-                  </Button>
+                  <RemoveDoctorButton 
+                    id={d.id} 
+                    name={d.name} 
+                    onRemove={removeDoctor} 
+                  />
                 </div>
                 <p className="mt-5 text-xs uppercase tracking-wide text-muted">
                   Working shifts
@@ -311,9 +297,6 @@ export default function SettingsPage() {
                   </p>
                   <p className="text-[11px] text-muted">
                     {s.email} · {s.role}
-                    {s.role === "doctor" && s.doctorId && (
-                      <> · {doctors.find((d) => d.id === s.doctorId)?.name ?? "unknown"}</>
-                    )}
                   </p>
                   <div className="mt-1 flex flex-wrap gap-1">
                     {s.permissions.map((p) => (
@@ -323,23 +306,18 @@ export default function SettingsPage() {
                     ))}
                   </div>
                 </div>
-                <Button
-                  variant="danger"
-                  className="h-8 shrink-0 px-3 text-xs"
-                  onClick={() => {
-                    if (confirm(`Remove ${s.fullName || s.email}?`)) {
-                      removeStaff(s.id);
-                    }
-                  }}
-                >
-                  Remove
-                </Button>
+                <RemoveStaffButton 
+                  id={s.id} 
+                  name={s.fullName || s.email} 
+                  onRemove={removeStaff} 
+                />
               </div>
             ))}
           </div>
         </Card>
       </div>
 
+      {/* ADD DOCTOR DIALOG */}
       <Dialog
         open={addDoctorOpen}
         onClose={() => setAddDoctorOpen(false)}
@@ -375,6 +353,7 @@ export default function SettingsPage() {
             </Button>
             <Button
               type="submit"
+              isLoading={savingDoctor}
               disabled={!newDoctorName.trim() || !newDoctorSpecialty.trim()}
             >
               Add doctor
@@ -383,6 +362,7 @@ export default function SettingsPage() {
         </form>
       </Dialog>
 
+      {/* ADD STAFF DIALOG */}
       <Dialog open={staffOpen} onClose={() => setStaffOpen(false)} title="Add staff">
         <form onSubmit={submitStaff} className="space-y-4">
           <div>
@@ -484,8 +464,8 @@ export default function SettingsPage() {
             >
               Cancel
             </Button>
-            <Button type="submit" disabled={staffSaving}>
-              {staffSaving ? "Creating…" : "Create login"}
+            <Button type="submit" isLoading={staffSaving}>
+              Create login
             </Button>
           </div>
         </form>
@@ -497,16 +477,7 @@ export default function SettingsPage() {
 const inputClass =
   "mt-1 w-full rounded-lg border border-line bg-canvas px-3 py-2 text-sm text-ink outline-none focus:border-accent";
 
-const timeInputClass =
-  "rounded-lg border border-line bg-canvas px-2.5 py-1.5 text-xs tabular-nums text-ink outline-none focus:border-accent";
-
-function SectionHeader({
-  title,
-  subtitle,
-}: {
-  title: string;
-  subtitle: string;
-}) {
+function SectionHeader({ title, subtitle }: { title: string; subtitle: string }) {
   return (
     <div>
       <h2 className="text-base font-semibold">{title}</h2>
@@ -515,13 +486,7 @@ function SectionHeader({
   );
 }
 
-function Field({
-  label,
-  children,
-}: {
-  label: string;
-  children: React.ReactNode;
-}) {
+function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <label className="block">
       <span className="text-xs font-medium text-muted">{label}</span>
@@ -530,6 +495,39 @@ function Field({
   );
 }
 
+// HELPER: Remove Doctor Button with Loading State
+function RemoveDoctorButton({ id, name, onRemove }: { id: string; name: string; onRemove: (id: string) => Promise<void> }) {
+  const [loading, setLoading] = useState(false);
+  async function handle() {
+    if (!confirm(`Remove ${name}?`)) return;
+    setLoading(true);
+    await onRemove(id);
+    setLoading(false);
+  }
+  return (
+    <Button variant="danger" className="h-8 shrink-0 px-3 text-xs" onClick={handle} isLoading={loading}>
+      Remove
+    </Button>
+  );
+}
+
+// HELPER: Remove Staff Button with Loading State
+function RemoveStaffButton({ id, name, onRemove }: { id: string; name: string; onRemove: (id: string) => Promise<void> }) {
+  const [loading, setLoading] = useState(false);
+  async function handle() {
+    if (!confirm(`Remove ${name}?`)) return;
+    setLoading(true);
+    await onRemove(id);
+    setLoading(false);
+  }
+  return (
+    <Button variant="danger" className="h-8 shrink-0 px-3 text-xs" onClick={handle} isLoading={loading}>
+      Remove
+    </Button>
+  );
+}
+
+// REPLACED: Dropdown Time Picker (No lag)
 function ShiftsRow({
   label,
   shifts,
@@ -543,17 +541,20 @@ function ShiftsRow({
 }) {
   const isOpen = shifts.length > 0;
 
+  // THE FIX IS HERE: added `: string[]` to satisfy strict TypeScript
+  const times: string[] = [];
+  for (let h = 8; h <= 22; h++) {
+    times.push(`${String(h).padStart(2, "0")}:00`);
+    if (h !== 22) times.push(`${String(h).padStart(2, "0")}:30`);
+  }
+
   function addShift() {
     if (shifts.length === 0) {
       onChange([{ start: "09:00", end: "13:00" }]);
       return;
     }
     const lastEnd = shifts[shifts.length - 1].end;
-    const [eh] = lastEnd.split(":").map(Number);
-    const nextStartH = Math.min(eh + 4, 20);
-    const nextEndH = Math.min(eh + 7, 22);
-    const fmt = (h: number) => `${String(h).padStart(2, "0")}:00`;
-    onChange([...shifts, { start: fmt(nextStartH), end: fmt(nextEndH) }]);
+    onChange([...shifts, { start: lastEnd, end: "18:00" }]);
   }
 
   function updateShift(idx: number, patch: Partial<Shift>) {
@@ -582,28 +583,37 @@ function ShiftsRow({
 
       {isOpen && (
         <div className="mt-2 space-y-2 pl-24">
-          {shifts.map((s, idx) => (
-            <div key={idx} className="flex items-center gap-2">
-              <input
-                type="time"
+          {shifts.map((s, i) => (
+            <div key={i} className="flex items-center gap-2">
+              <select
                 value={s.start}
-                onChange={(e) => updateShift(idx, { start: e.target.value })}
-                className={timeInputClass}
-              />
-              <span className="text-xs text-muted">to</span>
-              <input
-                type="time"
-                value={s.end}
-                onChange={(e) => updateShift(idx, { end: e.target.value })}
-                className={timeInputClass}
-              />
-              <Button
-                variant="ghost"
-                className="h-7 px-2.5 text-[11px]"
-                onClick={() => removeShift(idx)}
+                onChange={(e) => updateShift(i, { start: e.target.value })}
+                className="rounded-lg border border-line bg-canvas px-2 py-1.5 text-xs tabular-nums text-ink outline-none focus:border-accent"
               >
-                Remove
-              </Button>
+                {times.map((t) => (
+                  <option key={t} value={t}>{t}</option>
+                ))}
+              </select>
+              
+              <span className="text-xs text-muted">to</span>
+              
+              <select
+                value={s.end}
+                onChange={(e) => updateShift(i, { end: e.target.value })}
+                className="rounded-lg border border-line bg-canvas px-2 py-1.5 text-xs tabular-nums text-ink outline-none focus:border-accent"
+              >
+                {times.map((t) => (
+                  <option key={t} value={t}>{t}</option>
+                ))}
+              </select>
+              
+              <button
+                type="button"
+                onClick={() => removeShift(i)}
+                className="ml-1 text-xs text-muted transition-colors hover:text-danger"
+              >
+                ✕
+              </button>
             </div>
           ))}
         </div>
