@@ -7,6 +7,7 @@ import { Badge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
 import { DayPicker, todayIso } from "@/components/ui/DayPicker";
 import { useClinic, useEnsureLoaded } from "@/lib/store";
+import { createClient } from "@/lib/supabase/client";
 import type { QueueEntry, Shift } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
@@ -16,18 +17,11 @@ export default function DoctorPage() {
   const currentRole = useClinic((s) => s.currentRole);
   const currentDoctorId = useClinic((s) => s.currentDoctorId);
 
-  // A staff login linked to a doctor is locked to that doctor's queue.
-  // Owners (and unlinked staff) can pick which doctor to view.
-  const isDoctor = currentRole === "staff" && !!currentDoctorId;
-  const [doctorId, setDoctorId] = useState<string>(
-    isDoctor ? currentDoctorId! : doctors[0]?.id ?? ""
-  );
+  const isDoctor = currentRole === "doctor" && !!currentDoctorId;
+  const [doctorId, setDoctorId] = useState<string>(isDoctor ? currentDoctorId! : doctors[0]?.id ?? "");
   const [day, setDay] = useState<string>(todayIso());
 
-  const doctor = useMemo(
-    () => doctors.find((d) => d.id === (doctorId || doctors[0]?.id)),
-    [doctors, doctorId]
-  );
+  const doctor = useMemo(() => doctors.find((d) => d.id === (doctorId || doctors[0]?.id)), [doctors, doctorId]);
 
   if (!doctor) {
     return (
@@ -44,40 +38,23 @@ export default function DoctorPage() {
           {isDoctor ? (
             <div className="max-w-xs">
               <p className="text-xs font-medium text-muted">Signed in as</p>
-              <p className="mt-1 text-sm font-medium">
-                {doctors.find((d) => d.id === currentDoctorId)?.name ?? "—"}
-              </p>
+              <p className="mt-1 text-sm font-medium">{doctors.find((d) => d.id === currentDoctorId)?.name ?? "—"}</p>
             </div>
           ) : (
             <div className="max-w-xs">
-              <label className="text-xs font-medium text-muted">
-                View as doctor
-              </label>
-              <select
-                value={doctor.id}
-                onChange={(e) => setDoctorId(e.target.value)}
-                className="mt-1 w-full rounded-lg border border-line bg-elevated px-3 py-2 text-sm text-ink outline-none focus:border-accent"
-              >
-                {doctors.map((d) => (
-                  <option key={d.id} value={d.id}>
-                    {d.name} — {d.specialty}
-                  </option>
-                ))}
+              <label className="text-xs font-medium text-muted">View as doctor</label>
+              <select value={doctor.id} onChange={(e) => setDoctorId(e.target.value)} className="mt-1 w-full rounded-lg border border-line bg-elevated px-3 py-2 text-sm text-ink outline-none focus:border-accent">
+                {doctors.map((d) => <option key={d.id} value={d.id}>{d.name} — {d.specialty}</option>)}
               </select>
             </div>
           )}
-
           <div>
-            <p className="text-xs font-medium uppercase tracking-wide text-muted">
-              Date
-            </p>
+            <p className="text-xs font-medium uppercase tracking-wide text-muted">Date</p>
             <DayPicker days={7} value={day} onChange={setDay} className="mt-2" />
           </div>
         </div>
-
         <QueueControls doctorId={doctor.id} />
       </div>
-
       <DoctorWorkspace doctorId={doctor.id} day={day} />
     </AppShell>
   );
@@ -112,6 +89,7 @@ function DoctorWorkspace({ doctorId, day }: { doctorId: string; day: string }) {
   const paused = useClinic((s) => s.pausedDoctors.includes(doctorId));
   const callNext = useClinic((s) => s.callNext);
   const complete = useClinic((s) => s.completeConsultation);
+  const load = useClinic((s) => s.load);
 
   const [calling, setCalling] = useState(false);
   const [completing, setCompleting] = useState(false);
@@ -120,53 +98,31 @@ function DoctorWorkspace({ doctorId, day }: { doctorId: string; day: string }) {
   const [shiftKey, setShiftKey] = useState<string | null>(null);
 
   const dayOfWeek = new Date(day).getDay();
-  const shiftsForDay = useMemo(
-    () => (doctor.workingHours[dayOfWeek] ?? []).slice().sort((a, b) => a.start.localeCompare(b.start)),
-    [doctor, dayOfWeek]
-  );
+  const shiftsForDay = useMemo(() => (doctor.workingHours[dayOfWeek] ?? []).slice().sort((a, b) => a.start.localeCompare(b.start)), [doctor, dayOfWeek]);
 
-  const doctorEntries = useMemo(
-    () => queueEntries.filter((e) => e.doctorId === doctorId && e.day === day),
-    [queueEntries, doctorId, day]
-  );
-
-  const current = useMemo(
-    () => doctorEntries.find((e) => e.status === "in_consultation"),
-    [doctorEntries]
-  );
-
-  const waitingAll = useMemo(
-    () => doctorEntries.filter((e) => e.status === "waiting").sort((a, b) => a.tokenNumber - b.tokenNumber),
-    [doctorEntries]
-  );
+  const doctorEntries = useMemo(() => queueEntries.filter((e) => e.doctorId === doctorId && e.day === day), [queueEntries, doctorId, day]);
+  const current = useMemo(() => doctorEntries.find((e) => e.status === "in_consultation"), [doctorEntries]);
+  const waitingAll = useMemo(() => doctorEntries.filter((e) => e.status === "waiting").sort((a, b) => a.tokenNumber - b.tokenNumber), [doctorEntries]);
 
   const waitingPerShift = useMemo(() => {
     const m = new Map<string, number>();
-    for (const e of waitingAll) {
-      const k = shiftKeyOf(e);
-      m.set(k, (m.get(k) ?? 0) + 1);
-    }
+    for (const e of waitingAll) { const k = shiftKeyOf(e); m.set(k, (m.get(k) ?? 0) + 1); }
     return m;
   }, [waitingAll]);
 
-  const waiting = useMemo(
-    () => waitingAll.filter((e) => (shiftKey ? shiftKeyOf(e) === shiftKey : true)),
-    [waitingAll, shiftKey]
-  );
-
+  const waiting = useMemo(() => waitingAll.filter((e) => (shiftKey ? shiftKeyOf(e) === shiftKey : true)), [waitingAll, shiftKey]);
   const nextUp = waiting[0];
 
-  async function handleCallNext() {
-    setCalling(true);
-    await callNext(doctorId);
-    setCalling(false);
-  }
+  async function handleCallNext() { setCalling(true); await callNext(doctorId); setCalling(false); }
+  async function handleComplete() { if (!current) return; setCompleting(true); await complete(current.id); setCompleting(false); }
 
-  async function handleComplete() {
-    if (!current) return;
-    setCompleting(true);
-    await complete(current.id);
-    setCompleting(false);
+  async function changePatientShift(patientId: string, newShift: string, endTime: string) {
+    const supabase = createClient();
+    await supabase.from("queue_entries").update({
+      shift_start: newShift,
+      shift_end: endTime,
+    }).eq("id", patientId);
+    await load();
   }
 
   return (
@@ -184,9 +140,7 @@ function DoctorWorkspace({ doctorId, day }: { doctorId: string; day: string }) {
           <p className="text-xs uppercase tracking-wide text-muted">Current patient</p>
           {current ? (
             <>
-              <p className="mt-2 text-xs text-muted">
-                #{current.tokenNumber} · {shiftLabel({ start: current.shiftStart, end: current.shiftEnd })}
-              </p>
+              <p className="mt-2 text-xs text-muted">#{current.tokenNumber} · {shiftLabel({ start: current.shiftStart, end: current.shiftEnd })}</p>
               <p className="text-2xl font-semibold">{current.patientName}</p>
               <div className="mt-6 flex flex-wrap gap-3">
                 <Button onClick={handleComplete} isLoading={completing}>Mark complete</Button>
@@ -196,9 +150,7 @@ function DoctorWorkspace({ doctorId, day }: { doctorId: string; day: string }) {
             <>
               <p className="mt-3 text-2xl font-semibold text-muted">No patient in consultation</p>
               <div className="mt-6 flex flex-wrap gap-3">
-                <Button onClick={handleCallNext} disabled={paused || waiting.length === 0} isLoading={calling}>
-                  Call next patient
-                </Button>
+                <Button onClick={handleCallNext} disabled={paused || waiting.length === 0} isLoading={calling}>Call next patient</Button>
               </div>
             </>
           )}
@@ -208,13 +160,9 @@ function DoctorWorkspace({ doctorId, day }: { doctorId: string; day: string }) {
           <p className="text-xs uppercase tracking-wide text-muted">Next up</p>
           {nextUp ? (
             <>
-              <p className="mt-2 text-xs text-muted">
-                #{nextUp.tokenNumber} · {shiftLabel({ start: nextUp.shiftStart, end: nextUp.shiftEnd })}
-              </p>
+              <p className="mt-2 text-xs text-muted">#{nextUp.tokenNumber} · {shiftLabel({ start: nextUp.shiftStart, end: nextUp.shiftEnd })}</p>
               <p className="text-lg font-medium">{nextUp.patientName}</p>
-              <Badge tone={nextUp.arrivalType === "walk_in" ? "warn" : "accent"}>
-                {nextUp.arrivalType === "walk_in" ? "Walk-in" : "Appointment"}
-              </Badge>
+              <Badge tone={nextUp.arrivalType === "walk_in" ? "warn" : "accent"}>{nextUp.arrivalType === "walk_in" ? "Walk-in" : "Appointment"}</Badge>
             </>
           ) : (
             <p className="mt-3 text-sm text-muted">No one waiting.</p>
@@ -227,11 +175,28 @@ function DoctorWorkspace({ doctorId, day }: { doctorId: string; day: string }) {
             {waiting.map((q) => (
               <div key={q.id} className="flex items-center justify-between gap-3 py-3">
                 <div className="min-w-0">
-                  <p className="truncate text-sm">
-                    <span className="text-muted">#{q.tokenNumber}</span> {q.patientName}
-                  </p>
+                  <p className="truncate text-sm"><span className="text-muted">#{q.tokenNumber}</span> {q.patientName}</p>
                 </div>
-                <Badge tone="muted">{q.arrivalType === "walk_in" ? "Walk-in" : "Appointment"}</Badge>
+                <div className="flex items-center gap-4">
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-[10px] uppercase text-muted">Shift:</span>
+                    <select
+                      value={`${q.shiftStart}-${q.shiftEnd}`}
+                      onChange={(e) => {
+                        const [newStart, newEnd] = e.target.value.split("-");
+                        changePatientShift(q.id, newStart, newEnd);
+                      }}
+                      className="rounded border border-line bg-surface px-1.5 py-0.5 text-[11px] text-ink outline-none"
+                    >
+                      {shiftsForDay.map((s) => (
+                        <option key={`${s.start}-${s.end}`} value={`${s.start}-${s.end}`}>
+                          {shiftLabel(s)}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <Badge tone="muted">{q.arrivalType === "walk_in" ? "Walk-in" : "Appointment"}</Badge>
+                </div>
               </div>
             ))}
             {waiting.length === 0 && <p className="py-4 text-sm text-muted">Queue is empty.</p>}
@@ -252,9 +217,4 @@ function ShiftTab({ label, count, active, onClick }: { label: string; count: num
 
 function shiftKeyOf(e: QueueEntry): string { return `${e.shiftStart}-${e.shiftEnd}`; }
 function shiftLabel(s: Shift): string { return `${format12(s.start)} – ${format12(s.end)}`; }
-function format12(hhmm: string): string {
-  const [h, m] = hhmm.split(":").map(Number);
-  const period = h < 12 ? "AM" : "PM";
-  const hour12 = h % 12 === 0 ? 12 : h % 12;
-  return m === 0 ? `${hour12} ${period}` : `${hour12}:${String(m).padStart(2, "0")} ${period}`;
-}
+function format12(hhmm: string): string { const [h, m] = hhmm.split(":").map(Number); const period = h < 12 ? "AM" : "PM"; const hour12 = h % 12 === 0 ? 12 : h % 12; return m === 0 ? `${hour12} ${period}` : `${hour12}:${String(m).padStart(2, "0")} ${period}`; }

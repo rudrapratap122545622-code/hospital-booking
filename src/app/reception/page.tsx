@@ -80,7 +80,6 @@ function QueueCard({ doctor, day }: { doctor: Doctor; day: string }) {
   const [open, setOpen] = useState(false);
   const [name, setName] = useState("");
   const [saving, setSaving] = useState(false);
-  const [shiftingId, setShiftingId] = useState<string | null>(null);
 
   const dayOfWeek = new Date(day).getDay();
   const shiftsForDay = useMemo(() => (doctor.workingHours[dayOfWeek] ?? []).slice().sort((a, b) => a.start.localeCompare(b.start)), [doctor, dayOfWeek]);
@@ -108,20 +107,13 @@ function QueueCard({ doctor, day }: { doctor: Doctor; day: string }) {
     setOpen(false);
   }
 
-  // FIX: Move patient to the next shift
-  async function handleChangeShift(queueEntryId: string, currentShiftIndex: number) {
-    const nextShift = shiftsForDay[currentShiftIndex + 1];
-    if (!nextShift) return alert("No next shift available for this doctor today.");
-    
-    setShiftingId(queueEntryId);
+  async function changePatientShift(patientId: string, newShift: string, endTime: string) {
     const supabase = createClient();
     await supabase.from("queue_entries").update({
-      shift_start: nextShift.start,
-      shift_end: nextShift.end,
-    }).eq("id", queueEntryId);
-    
-    await load(); // Refresh data
-    setShiftingId(null);
+      shift_start: newShift,
+      shift_end: endTime,
+    }).eq("id", patientId);
+    await load();
   }
 
   return (
@@ -179,32 +171,34 @@ function QueueCard({ doctor, day }: { doctor: Doctor; day: string }) {
       <div className="flex-1 p-5">
         <p className="text-xs uppercase tracking-wide text-muted">Waiting ({waiting.length})</p>
         <div className="mt-3 space-y-2">
-          {waiting.map((q) => {
-            const shiftIndex = shiftsForDay.findIndex((s) => s.start === q.shiftStart);
-            const canShift = shiftIndex >= 0 && shiftIndex < shiftsForDay.length - 1;
-            
-            return (
-              <div key={q.id} className="flex flex-col gap-2 rounded-lg bg-elevated px-3 py-2">
-                <div className="flex items-center justify-between gap-2">
-                  <div className="min-w-0">
-                    <p className="truncate text-sm"><span className="text-muted">#{q.tokenNumber}</span> {q.patientName}</p>
-                    <p className="truncate text-[11px] text-muted">{q.patientPhone ?? "No phone"} · {shiftLabel({ start: q.shiftStart, end: q.shiftEnd })}</p>
-                  </div>
-                  <Badge tone="muted">{q.arrivalType === "walk_in" ? "Walk-in" : "Apt."}</Badge>
+          {waiting.map((q) => (
+            <div key={q.id} className="flex flex-col gap-2 rounded-lg bg-elevated px-3 py-2">
+              <div className="flex items-center justify-between gap-2">
+                <div className="min-w-0">
+                  <p className="truncate text-sm"><span className="text-muted">#{q.tokenNumber}</span> {q.patientName}</p>
+                  <p className="truncate text-[11px] text-muted">{q.patientPhone ?? "No phone"}</p>
                 </div>
-                
-                {canShift && (
-                  <button 
-                    onClick={() => handleChangeShift(q.id, shiftIndex)}
-                    disabled={shiftingId === q.id}
-                    className="text-left text-[11px] font-medium text-accent hover:underline disabled:opacity-50"
-                  >
-                    {shiftingId === q.id ? "Shifting..." : "→ Move to next shift"}
-                  </button>
-                )}
+                <Badge tone="muted">{q.arrivalType === "walk_in" ? "Walk-in" : "Apt."}</Badge>
               </div>
-            );
-          })}
+              <div className="flex items-center gap-2 border-t border-line pt-2">
+                <span className="text-[10px] uppercase text-muted">Shift:</span>
+                <select
+                  value={`${q.shiftStart}-${q.shiftEnd}`}
+                  onChange={(e) => {
+                    const [newStart, newEnd] = e.target.value.split("-");
+                    changePatientShift(q.id, newStart, newEnd);
+                  }}
+                  className="rounded border border-line bg-surface px-1.5 py-0.5 text-[11px] text-ink outline-none"
+                >
+                  {shiftsForDay.map((s) => (
+                    <option key={`${s.start}-${s.end}`} value={`${s.start}-${s.end}`}>
+                      {shiftLabel(s)}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </div>
+          ))}
           {waiting.length === 0 && <p className="text-sm text-muted">{shiftKey ? "No one waiting in this shift." : "Queue is empty."}</p>}
         </div>
       </div>
