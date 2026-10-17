@@ -1,7 +1,7 @@
 import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
 
-const PROTECTED_PREFIXES = ["/reception", "/doctor", "/settings"];
+const PROTECTED_PREFIXES = ["/reception", "/doctor", "/settings", "/analytics"];
 
 export async function proxy(request: NextRequest) {
   let response = NextResponse.next({ request });
@@ -61,8 +61,8 @@ export async function proxy(request: NextRequest) {
       return NextResponse.redirect(new URL(dest, request.url));
     }
 
-    // SECURITY LOCK: If they try to access /settings but are not an owner, block them.
-    if (path.startsWith("/settings") && !isOwner) {
+    // SECURITY LOCK: If they try to access /settings or /analytics but are not an owner, block them.
+    if ((path.startsWith("/settings") || path.startsWith("/analytics")) && !isOwner) {
       return NextResponse.redirect(new URL("/reception", request.url));
     }
   }
