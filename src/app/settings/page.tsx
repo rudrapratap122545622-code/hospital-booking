@@ -40,7 +40,7 @@ export default function SettingsPage() {
   const [staffPassword, setStaffPassword] = useState("");
   const [staffName, setStaffName] = useState("");
   
-  // Simplified: default is receptionist
+  // SIMPLIFIED: Only Receptionist or Doctor
   const [staffRole, setStaffRole] = useState<StaffRole>("receptionist");
   const [staffDoctorId, setStaffDoctorId] = useState("");
   const [staffErr, setStaffErr] = useState<string | null>(null);
@@ -388,8 +388,8 @@ export default function SettingsPage() {
               onChange={(e) => setStaffRole(e.target.value as StaffRole)}
               className="mt-1 w-full rounded-lg border border-line bg-elevated px-3 py-2 text-sm text-ink outline-none focus:border-accent"
             >
-              <option value="receptionist">Receptionist (Manages the front desk)</option>
-              <option value="doctor">Doctor (Manages their own queue)</option>
+              <option value="receptionist">Receptionist (Front desk)</option>
+              <option value="doctor">Doctor (Patient queue)</option>
             </select>
           </div>
 
