@@ -1,20 +1,7 @@
 import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
 
-const PAGE_PERMISSIONS: { prefix: string; permission: string }[] = [
-  { prefix: "/reception", permission: "reception" },
-  { prefix: "/doctor", permission: "doctor" },
-  { prefix: "/settings", permission: "settings" },
-];
-
-const FALLBACK = "/book";
-
-function landingPageFor(permissions: string[]): string {
-  if (permissions.includes("reception")) return "/reception";
-  if (permissions.includes("doctor")) return "/doctor";
-  if (permissions.includes("settings")) return "/settings";
-  return FALLBACK;
-}
+const PROTECTED_PREFIXES = ["/reception", "/doctor", "/settings"];
 
 export async function proxy(request: NextRequest) {
   let response = NextResponse.next({ request });
@@ -23,10 +10,10 @@ export async function proxy(request: NextRequest) {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
   const key = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
   
-  // FIX: Fail closed. If env vars are missing, don't let them into the app.
+  // Fail closed if env vars are missing
   if (!url || !key) {
-    const required = PAGE_PERMISSIONS.find((p) => path.startsWith(p.prefix));
-    if (required) return NextResponse.redirect(new URL("/login", request.url));
+    const needsAuth = PROTECTED_PREFIXES.some((p) => path.startsWith(p));
+    if (needsAuth) return NextResponse.redirect(new URL("/login", request.url));
     return response;
   }
 
@@ -48,46 +35,28 @@ export async function proxy(request: NextRequest) {
   });
 
   const { data: { user } } = await supabase.auth.getUser();
-  const required = PAGE_PERMISSIONS.find((p) => path.startsWith(p.prefix));
+  const needsAuth = PROTECTED_PREFIXES.some((p) => path.startsWith(p));
 
-  if (!required) {
-    if (user && path === "/login") {
-      const { data: staff } = await supabase
-        .from("clinic_staff")
-        .select("permissions")
-        .eq("user_id", user.id)
-        .maybeSingle();
-      const landing = landingPageFor((staff?.permissions as string[] | null) ?? []);
-      return NextResponse.redirect(new URL(landing, request.url));
-    }
-    return response;
-  }
-
-  if (!user) {
+  // 1. If not logged in, send to login
+  if (needsAuth && !user) {
     const login = new URL("/login", request.url);
-    // FIX: Prevent open redirect. Only allow internal paths.
+    // Prevent open redirect
     const safeNext = path.startsWith("/") && !path.startsWith("//") ? path : "/reception";
     login.searchParams.set("next", safeNext);
     return NextResponse.redirect(login);
   }
 
-  const { data: staff } = await supabase
-    .from("clinic_staff")
-    .select("permissions, role")
-    .eq("user_id", user.id)
-    .maybeSingle();
-
-  // Owners bypass permission checks
-  if (staff?.role === "owner") return response;
-
-  const permissions = (staff?.permissions as string[] | null) ?? [];
-
-  if (!permissions.includes(required.permission)) {
-    const landing = landingPageFor(permissions);
-    if (path.startsWith(landing)) {
-      return NextResponse.redirect(new URL(FALLBACK, request.url));
-    }
-    return NextResponse.redirect(new URL(landing, request.url));
+  // 2. If logged in and visiting /login, push to their dashboard
+  if (user && path === "/login") {
+    const { data: staff } = await supabase
+      .from("clinic_staff")
+      .select("role")
+      .eq("user_id", user.id)
+      .maybeSingle();
+      
+    // Doctors go to /doctor, everyone else to /reception
+    const dest = staff?.role === "doctor" ? "/doctor" : "/reception";
+    return NextResponse.redirect(new URL(dest, request.url));
   }
 
   return response;
