@@ -7,7 +7,14 @@ import { Button } from "@/components/ui/Button";
 import { Badge } from "@/components/ui/Badge";
 import { createClient } from "@/lib/supabase/client";
 import type { Appointment, Clinic, Doctor, Shift } from "@/lib/types";
-import { cn } from "@/lib/utils";
+import {
+  addCalendarDays,
+  calendarDateTimeToIso,
+  dateInTimeZone,
+  timeInTimeZone,
+  weekdayForCalendarDate,
+  cn,
+} from "@/lib/utils";
 
 type Step = "doctor" | "shift" | "details" | "done";
 
@@ -102,10 +109,6 @@ export default function BookPage() {
       return;
 
     setSubmitting(true);
-    const [sh, sm] = shift.start.split(":").map(Number);
-    const start = new Date(dayIso);
-    start.setHours(sh, sm, 0, 0);
-
     const supabase = createClient();
     const reference = `CF-${Math.floor(2000 + Math.random() * 8000)}`;
     const { data, error } = await supabase
@@ -115,7 +118,7 @@ export default function BookPage() {
         doctor_id: doctorId,
         patient_name: name.trim(),
         patient_phone: phone.trim(),
-        scheduled_at: start.toISOString(),
+        scheduled_at: calendarDateTimeToIso(dayIso, shift.start, clinic.timezone),
         shift_end: shift.end,
         status: "booked",
         reference,
@@ -212,7 +215,7 @@ export default function BookPage() {
           <div className="mt-8 grid gap-3">
             {docErr && (
               <p className="text-sm text-danger">
-                Couldn't load doctors: {docErr}
+                Couldn&apos;t load doctors: {docErr}
               </p>
             )}
             {!docErr && doctors.length === 0 && (
@@ -222,7 +225,11 @@ export default function BookPage() {
               const working = Object.values(d.workingHours).some(
                 (s) => (s ?? []).length > 0
               );
-              const preview = nextShiftFor(d, clinic.bookingDaysAhead);
+              const preview = nextShiftFor(
+                d,
+                clinic.bookingDaysAhead,
+                clinic.timezone
+              );
               return (
                 <button
                   key={d.id}
@@ -257,6 +264,7 @@ export default function BookPage() {
           <ShiftPicker
             doctor={doctor}
             daysAhead={clinic.bookingDaysAhead}
+            timezone={clinic.timezone}
             dayIso={dayIso}
             shift={shift}
             onPickDay={(iso) => {
@@ -326,7 +334,7 @@ export default function BookPage() {
           <Card className="mt-8">
             <Badge tone="ok">Booking confirmed</Badge>
             <h2 className="mt-4 text-2xl font-semibold">
-              You're all set, {confirmed.patientName.split(" ")[0]}.
+              You&apos;re all set, {confirmed.patientName.split(" ")[0]}.
             </h2>
             <p className="mt-2 text-sm text-muted">
               Arrive within the shift and check in at reception. Quote your
@@ -344,7 +352,7 @@ export default function BookPage() {
                 <Row
                   label="Shift"
                   value={`${longDay(confirmed.scheduledAt)} · ${shiftLabel({
-                    start: hhmmOf(confirmed.scheduledAt),
+                    start: hhmmOf(confirmed.scheduledAt, clinic.timezone),
                     end: confirmed.shiftEnd,
                   })}`}
                 />
@@ -379,6 +387,7 @@ export default function BookPage() {
 function ShiftPicker({
   doctor,
   daysAhead,
+  timezone,
   dayIso,
   shift,
   onPickDay,
@@ -388,6 +397,7 @@ function ShiftPicker({
 }: {
   doctor: Doctor;
   daysAhead: number;
+  timezone: string;
   dayIso: string | null;
   shift: Shift | null;
   onPickDay: (iso: string) => void;
@@ -395,14 +405,14 @@ function ShiftPicker({
   onBack: () => void;
   onNext: () => void;
 }) {
-  const days = useMemo(() => nextNDays(daysAhead), [daysAhead]);
-  const activeDay = useMemo(
-    () => (dayIso ? new Date(dayIso) : days[0]),
-    [dayIso, days]
+  const days = useMemo(
+    () => nextNDays(daysAhead, timezone),
+    [daysAhead, timezone]
   );
+  const activeDay = dayIso ?? days[0];
   const shifts = useMemo(
     () =>
-      (doctor.workingHours[activeDay.getDay()] ?? [])
+      (doctor.workingHours[weekdayForCalendarDate(activeDay)] ?? [])
         .slice()
         .sort((a, b) => a.start.localeCompare(b.start)),
     [doctor, activeDay]
@@ -422,16 +432,17 @@ function ShiftPicker({
 
       <p className="mt-6 text-xs uppercase tracking-wide text-muted">Pick a day</p>
       <div className="mt-2 flex gap-2 overflow-x-auto pb-1">
-        {days.map((d) => {
-          const working = (doctor.workingHours[d.getDay()] ?? []).length > 0;
-          const active =
-            dayIso && new Date(dayIso).toDateString() === d.toDateString();
-          const isToday = d.toDateString() === new Date().toDateString();
+        {days.map((day) => {
+          const date = new Date(`${day}T00:00:00.000Z`);
+          const working =
+            (doctor.workingHours[weekdayForCalendarDate(day)] ?? []).length > 0;
+          const active = dayIso === day;
+          const isToday = day === dateInTimeZone(new Date(), timezone);
           return (
             <button
-              key={d.toISOString()}
+              key={day}
               disabled={!working}
-              onClick={() => onPickDay(d.toISOString())}
+              onClick={() => onPickDay(day)}
               className={cn(
                 "shrink-0 rounded-lg border px-3 py-2 text-center text-xs transition-colors",
                 active
@@ -443,10 +454,17 @@ function ShiftPicker({
               <div className="font-medium">
                 {isToday
                   ? "Today"
-                  : d.toLocaleDateString("en-IN", { weekday: "short" })}
+                  : date.toLocaleDateString("en-IN", {
+                      weekday: "short",
+                      timeZone: "UTC",
+                    })}
               </div>
               <div className="mt-0.5 text-[10px]">
-                {d.toLocaleDateString("en-IN", { day: "numeric", month: "short" })}
+                {date.toLocaleDateString("en-IN", {
+                  day: "numeric",
+                  month: "short",
+                  timeZone: "UTC",
+                })}
               </div>
             </button>
           );
@@ -486,9 +504,8 @@ function ShiftPicker({
   );
 }
 
-function hhmmOf(iso: string): string {
-  const d = new Date(iso);
-  return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+function hhmmOf(iso: string, timezone: string): string {
+  return timeInTimeZone(new Date(iso), timezone);
 }
 
 function shiftLabel(s: Shift): string {
@@ -504,16 +521,9 @@ function format12(hhmm: string): string {
     : `${hour12}:${String(m).padStart(2, "0")} ${period}`;
 }
 
-function nextNDays(n: number): Date[] {
-  const out: Date[] = [];
-  const start = new Date();
-  start.setHours(0, 0, 0, 0);
-  for (let i = 0; i < n; i++) {
-    const d = new Date(start);
-    d.setDate(d.getDate() + i);
-    out.push(d);
-  }
-  return out;
+function nextNDays(n: number, timezone: string): string[] {
+  const today = dateInTimeZone(new Date(), timezone);
+  return Array.from({ length: n }, (_, i) => addCalendarDays(today, i));
 }
 
 function longDay(iso: string): string {
@@ -521,6 +531,7 @@ function longDay(iso: string): string {
     weekday: "long",
     day: "numeric",
     month: "long",
+    timeZone: "UTC",
   });
 }
 
@@ -535,20 +546,21 @@ function Row({ label, value }: { label: string; value: string }) {
 
 function nextShiftFor(
   doctor: Doctor,
-  daysAhead: number
+  daysAhead: number,
+  timezone: string
 ): { dayLabel: string; shift: Shift } | null {
   const now = new Date();
+  const today = dateInTimeZone(now, timezone);
+  const nowTime = timeInTimeZone(now, timezone);
   const limit = Math.max(1, daysAhead);
   for (let i = 0; i < limit; i++) {
-    const day = new Date(now);
-    day.setDate(day.getDate() + i);
-    const shifts = (doctor.workingHours[day.getDay()] ?? [])
+    const day = addCalendarDays(today, i);
+    const shifts = (doctor.workingHours[weekdayForCalendarDate(day)] ?? [])
       .slice()
       .sort((a, b) => a.start.localeCompare(b.start));
     for (const s of shifts) {
       if (i === 0) {
-        const [eh] = s.end.split(":").map(Number);
-        if (eh <= now.getHours()) continue;
+        if (s.end <= nowTime) continue;
       }
       return {
         dayLabel:
@@ -556,10 +568,11 @@ function nextShiftFor(
             ? "Today"
             : i === 1
             ? "Tomorrow"
-            : day.toLocaleDateString("en-IN", {
+            : new Date(`${day}T00:00:00.000Z`).toLocaleDateString("en-IN", {
                 weekday: "short",
                 day: "numeric",
                 month: "short",
+                timeZone: "UTC",
               }),
         shift: s,
       };

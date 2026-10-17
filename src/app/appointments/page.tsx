@@ -6,7 +6,7 @@ import { Card } from "@/components/ui/Card";
 import { Badge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
 import { useClinic, useEnsureLoaded } from "@/lib/store";
-import { cn } from "@/lib/utils";
+import { timeInTimeZone, cn } from "@/lib/utils";
 import type { AppointmentStatus } from "@/lib/types";
 
 type Filter = "all" | AppointmentStatus;
@@ -43,6 +43,7 @@ export default function AppointmentsPage() {
   useEnsureLoaded();
   const appointments = useClinic((s) => s.appointments);
   const doctors = useClinic((s) => s.doctors);
+  const timezone = useClinic((s) => s.clinic?.timezone);
   const checkIn = useClinic((s) => s.checkIn);
   const load = useClinic((s) => s.load);
 
@@ -133,7 +134,9 @@ export default function AppointmentsPage() {
                 className="border-b border-line last:border-b-0 hover:bg-elevated/40"
               >
                 <td className="px-5 py-3 text-sm">
-                  {formatShift(a.scheduledAt, a.shiftEnd)}
+                  {timezone
+                    ? formatShift(a.scheduledAt, a.shiftEnd, timezone)
+                    : "—"}
                 </td>
                 <td className="px-5 py-3 text-sm">{a.patientName}</td>
                 <td className="px-5 py-3 text-sm text-muted">
@@ -178,11 +181,13 @@ export default function AppointmentsPage() {
   );
 }
 
-function formatShift(startIso: string, endHHMM: string): string {
-  const d = new Date(startIso);
-  const hh = String(d.getHours()).padStart(2, "0");
-  const mm = String(d.getMinutes()).padStart(2, "0");
-  const start = fmt12(hh, mm);
+function formatShift(
+  startIso: string,
+  endHHMM: string,
+  timezone: string
+): string {
+  const [hour, minute] = timeInTimeZone(new Date(startIso), timezone).split(":");
+  const start = fmt12(hour, minute);
   const end = fmt12(endHHMM.slice(0, 2), endHHMM.slice(3, 5));
   return `${start} – ${end}`;
 }

@@ -1,46 +1,32 @@
 "use client";
 
 import { useMemo } from "react";
-import { cn } from "@/lib/utils";
-
-function localIso(d: Date): string {
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(
-    2,
-    "0"
-  )}-${String(d.getDate()).padStart(2, "0")}`;
-}
+import { addCalendarDays, dateInTimeZone, cn } from "@/lib/utils";
 
 export function DayPicker({
   days = 7,
   value,
   onChange,
+  timezone = Intl.DateTimeFormat().resolvedOptions().timeZone,
   className,
 }: {
   days?: number;
   value: string;
   onChange: (day: string) => void;
+  timezone?: string;
   className?: string;
 }) {
   const list = useMemo(() => {
-    const out: Date[] = [];
-    const start = new Date();
-    start.setHours(0, 0, 0, 0);
-    for (let i = 0; i < days; i++) {
-      const d = new Date(start);
-      d.setDate(d.getDate() + i);
-      out.push(d);
-    }
-    return out;
-  }, [days]);
-
-  const todayIso = localIso(new Date());
+    const today = todayIso(timezone);
+    return Array.from({ length: days }, (_, i) => addCalendarDays(today, i));
+  }, [days, timezone]);
 
   return (
     <div className={cn("flex gap-2 overflow-x-auto pb-1", className)}>
-      {list.map((d) => {
-        const iso = localIso(d);
+      {list.map((iso) => {
+        const date = new Date(`${iso}T00:00:00.000Z`);
         const active = iso === value;
-        const isToday = iso === todayIso;
+        const isToday = iso === todayIso(timezone);
         return (
           <button
             key={iso}
@@ -55,10 +41,17 @@ export function DayPicker({
             <div className="font-medium">
               {isToday
                 ? "Today"
-                : d.toLocaleDateString("en-IN", { weekday: "short" })}
+                : date.toLocaleDateString("en-IN", {
+                    weekday: "short",
+                    timeZone: "UTC",
+                  })}
             </div>
             <div className="mt-0.5 text-[10px]">
-              {d.toLocaleDateString("en-IN", { day: "numeric", month: "short" })}
+              {date.toLocaleDateString("en-IN", {
+                day: "numeric",
+                month: "short",
+                timeZone: "UTC",
+              })}
             </div>
           </button>
         );
@@ -67,6 +60,8 @@ export function DayPicker({
   );
 }
 
-export function todayIso(): string {
-  return localIso(new Date());
+export function todayIso(
+  timezone = Intl.DateTimeFormat().resolvedOptions().timeZone
+): string {
+  return dateInTimeZone(new Date(), timezone);
 }

@@ -9,16 +9,23 @@ import { Dialog } from "@/components/ui/Dialog";
 import { DayPicker, todayIso } from "@/components/ui/DayPicker";
 import { useClinic, useEnsureLoaded } from "@/lib/store";
 import type { Doctor, QueueEntry, Shift } from "@/lib/types";
-import { cn } from "@/lib/utils";
+import {
+  dateInTimeZone,
+  timeInTimeZone,
+  weekdayForCalendarDate,
+  cn,
+} from "@/lib/utils";
 
 export default function ReceptionPage() {
   useEnsureLoaded();
   const appointments = useClinic((s) => s.appointments);
   const queueEntries = useClinic((s) => s.queueEntries);
   const doctors = useClinic((s) => s.doctors);
+  const timezone = useClinic((s) => s.clinic?.timezone);
   const load = useClinic((s) => s.load);
 
-  const [day, setDay] = useState<string>(todayIso());
+  const [selectedDay, setSelectedDay] = useState<string | null>(null);
+  const day = selectedDay ?? todayIso(timezone);
   const [refreshing, setRefreshing] = useState(false);
 
   async function refresh() {
@@ -32,8 +39,13 @@ export default function ReceptionPage() {
     [queueEntries, day]
   );
   const dayAppointments = useMemo(
-    () => appointments.filter((a) => a.scheduledAt.slice(0, 10) === day),
-    [appointments, day]
+    () =>
+      timezone
+        ? appointments.filter(
+            (a) => dateInTimeZone(new Date(a.scheduledAt), timezone) === day
+          )
+        : [],
+    [appointments, day, timezone]
   );
 
   const stats = useMemo(
@@ -53,7 +65,13 @@ export default function ReceptionPage() {
           <p className="text-xs font-medium tracking-wide text-muted uppercase">
             Date
           </p>
-          <DayPicker days={7} value={day} onChange={setDay} className="mt-2" />
+          <DayPicker
+            days={7}
+            value={day}
+            onChange={setSelectedDay}
+            timezone={timezone}
+            className="mt-2"
+          />
         </div>
 
         <Button
@@ -76,7 +94,7 @@ export default function ReceptionPage() {
       <div className="mt-10">
         <h2 className="text-lg font-medium">Live queues</h2>
         <p className="mt-1 text-sm text-muted">
-          Check in booked patients so they join the doctor's queue.
+          Check in booked patients so they join the doctor&apos;s queue.
         </p>
         <div className="mt-5 grid gap-6 lg:grid-cols-2">
           {doctors.map((d) => (
@@ -104,7 +122,8 @@ function QueueCard({ doctor, day }: { doctor: Doctor; day: string }) {
   const [open, setOpen] = useState(false);
   const [name, setName] = useState("");
 
-  const dayOfWeek = new Date(day).getDay();
+  const timezone = useClinic((s) => s.clinic?.timezone);
+  const dayOfWeek = weekdayForCalendarDate(day);
   const shiftsForDay = useMemo(
     () =>
       (doctor.workingHours[dayOfWeek] ?? [])
@@ -124,14 +143,15 @@ function QueueCard({ doctor, day }: { doctor: Doctor; day: string }) {
         .filter(
           (a) =>
             a.doctorId === doctor.id &&
-            a.scheduledAt.slice(0, 10) === day &&
+            !!timezone &&
+            dateInTimeZone(new Date(a.scheduledAt), timezone) === day &&
             a.status === "booked"
         )
         .sort(
           (a, b) =>
             new Date(a.scheduledAt).getTime() - new Date(b.scheduledAt).getTime()
         ),
-    [appointments, doctor.id, day]
+    [appointments, doctor.id, day, timezone]
   );
 
   const current = useMemo(
@@ -208,7 +228,9 @@ function QueueCard({ doctor, day }: { doctor: Doctor; day: string }) {
                   <p className="truncate text-[11px] text-muted">
                     {a.patientPhone} ·{" "}
                     {shiftLabel({
-                      start: hhmmOf(a.scheduledAt),
+                      start: timezone
+                        ? timeInTimeZone(new Date(a.scheduledAt), timezone)
+                        : "",
                       end: a.shiftEnd,
                     })}
                   </p>
@@ -355,11 +377,6 @@ function Metric({ label, value }: { label: string; value: number }) {
       <p className="mt-3 text-3xl font-semibold tabular-nums">{value}</p>
     </Card>
   );
-}
-
-function hhmmOf(iso: string): string {
-  const d = new Date(iso);
-  return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
 }
 
 function shiftKeyOf(e: QueueEntry): string {

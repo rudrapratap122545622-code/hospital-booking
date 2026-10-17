@@ -49,4 +49,7 @@ Staff sign in at `https://<clinic>.vercel.app/login`.
 - Booking: `https://<clinic>.vercel.app/book`
 - Live queue: `https://<clinic>.vercel.app/queue`
 
+The `public_clinic` view must expose the clinic's IANA `timezone` value; booking
+and live queue dates are calculated in that timezone.
+
 Share the booking URL with the clinic. The queue URL can go on a QR code at reception.

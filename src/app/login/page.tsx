@@ -7,10 +7,20 @@ import { createClient } from "@/lib/supabase/client";
 import { Card } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
 
+function safeInternalDestination(value: string | null): string {
+  if (!value) return "/reception";
+  try {
+    const target = new URL(value, window.location.origin);
+    if (target.origin !== window.location.origin) return "/reception";
+    return `${target.pathname}${target.search}${target.hash}`;
+  } catch {
+    return "/reception";
+  }
+}
+
 function LoginInner() {
   const router = useRouter();
   const params = useSearchParams();
-  const next = params.get("next") ?? "/reception";
 
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -28,7 +38,7 @@ function LoginInner() {
       setLoading(false);
       return;
     }
-    router.push(next);
+    router.replace(safeInternalDestination(params.get("next")));
     router.refresh();
   }
 
@@ -41,7 +51,7 @@ function LoginInner() {
           </div>
           <h1 className="text-2xl font-semibold tracking-tight">Staff sign in</h1>
           <p className="mt-1 text-sm text-muted">
-            Clinic team access only. Patients don't need an account.
+            Clinic team access only. Patients don&apos;t need an account.
           </p>
         </div>
 

@@ -1,7 +1,6 @@
 import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
 
-// page prefix → permission required
 const PAGE_PERMISSIONS: { prefix: string; permission: string }[] = [
   { prefix: "/reception", permission: "reception" },
   { prefix: "/appointments", permission: "appointments" },
@@ -9,11 +8,9 @@ const PAGE_PERMISSIONS: { prefix: string; permission: string }[] = [
   { prefix: "/settings", permission: "settings" },
 ];
 
-// where to send a signed-in user who has no pages at all
 const FALLBACK = "/book";
 
 function landingPageFor(permissions: string[]): string {
-  // Order matters — first match wins
   if (permissions.includes("reception")) return "/reception";
   if (permissions.includes("doctor")) return "/doctor";
   if (permissions.includes("appointments")) return "/appointments";
@@ -23,10 +20,17 @@ function landingPageFor(permissions: string[]): string {
 
 export async function proxy(request: NextRequest) {
   let response = NextResponse.next({ request });
+  const path = request.nextUrl.pathname;
 
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
   const key = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
-  if (!url || !key) return response;
+  
+  // FIX: Fail closed. If env vars are missing, don't let them into the app.
+  if (!url || !key) {
+    const required = PAGE_PERMISSIONS.find((p) => path.startsWith(p.prefix));
+    if (required) return NextResponse.redirect(new URL("/login", request.url));
+    return response;
+  }
 
   const supabase = createServerClient(url, key, {
     cookies: {
@@ -45,54 +49,44 @@ export async function proxy(request: NextRequest) {
     },
   });
 
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-
-  const path = request.nextUrl.pathname;
-
-  // Which page does this URL require?
+  const { data: { user } } = await supabase.auth.getUser();
   const required = PAGE_PERMISSIONS.find((p) => path.startsWith(p.prefix));
 
-  // Not a protected page → let it through
   if (!required) {
-    // Except: if a signed-in user hits /login, send them to their landing page
     if (user && path === "/login") {
       const { data: staff } = await supabase
         .from("clinic_staff")
         .select("permissions")
         .eq("user_id", user.id)
         .maybeSingle();
-      const landing = landingPageFor(
-        (staff?.permissions as string[] | null) ?? []
-      );
+      const landing = landingPageFor((staff?.permissions as string[] | null) ?? []);
       return NextResponse.redirect(new URL(landing, request.url));
     }
     return response;
   }
 
-  // Protected page — must be signed in
   if (!user) {
     const login = new URL("/login", request.url);
-    login.searchParams.set("next", path);
+    // FIX: Prevent open redirect. Only allow internal paths.
+    const safeNext = path.startsWith("/") && !path.startsWith("//") ? path : "/reception";
+    login.searchParams.set("next", safeNext);
     return NextResponse.redirect(login);
   }
 
-  // Signed in — must have the right permission
   const { data: staff } = await supabase
     .from("clinic_staff")
-    .select("permissions")
+    .select("permissions, role")
     .eq("user_id", user.id)
     .maybeSingle();
+
+  // Owners bypass permission checks
+  if (staff?.role === "owner") return response;
 
   const permissions = (staff?.permissions as string[] | null) ?? [];
 
   if (!permissions.includes(required.permission)) {
-    // Not allowed here — send them to a page they CAN see
     const landing = landingPageFor(permissions);
     if (path.startsWith(landing)) {
-      // They're already on their only allowed page and still lack permission.
-      // Send to fallback to avoid a redirect loop.
       return NextResponse.redirect(new URL(FALLBACK, request.url));
     }
     return NextResponse.redirect(new URL(landing, request.url));

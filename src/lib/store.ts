@@ -2,6 +2,7 @@
 
 import { create } from "zustand";
 import { createClient } from "@/lib/supabase/client";
+import { dateInTimeZone, timeInTimeZone, weekdayInTimeZone } from "./utils";
 import type {
   Appointment,
   Clinic,
@@ -65,22 +66,18 @@ interface ClinicStore {
 
 type Row = Record<string, unknown>;
 
-function hhmm(d: Date): string {
-  return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
-}
-
-function nextTokenFor(queue: QueueEntry[], doctorId: string): number {
-  const forDoctor = queue.filter((q) => q.doctorId === doctorId);
-  return forDoctor.reduce((max, q) => Math.max(max, q.tokenNumber), 0) + 1;
-}
-
-function currentOrNextShift(doctor: Doctor, when = new Date()): Shift {
-  const todayShifts = doctor.workingHours[when.getDay()] ?? [];
-  const nowHHMM = hhmm(when);
+function currentOrNextShift(
+  doctor: Doctor,
+  timezone: string,
+  when = new Date()
+): Shift {
+  const today = weekdayInTimeZone(when, timezone);
+  const todayShifts = doctor.workingHours[today] ?? [];
+  const nowHHMM = timeInTimeZone(when, timezone);
   for (const s of todayShifts) if (s.start <= nowHHMM && nowHHMM < s.end) return s;
   for (const s of todayShifts) if (s.start > nowHHMM) return s;
   for (let i = 1; i <= 7; i++) {
-    const day = (when.getDay() + i) % 7;
+    const day = (today + i) % 7;
     const shifts = doctor.workingHours[day] ?? [];
     if (shifts.length) return shifts[0];
   }
@@ -207,6 +204,11 @@ export const useClinic = create<ClinicStore>((set, get) => ({
 
     const clinicId = staff.clinic_id as string;
 
+    // Fetch appointments only for a 3-day window to avoid downloading the entire DB
+    const today = new Date();
+    const start = new Date(today); start.setDate(start.getDate() - 1);
+    const end = new Date(today); end.setDate(end.getDate() + 2);
+
     const [clinicRes, docsRes, apptRes, queueRes, eventsRes] = await Promise.all([
       supabase.from("clinics").select("*").eq("id", clinicId).single(),
       supabase.from("doctors").select("*").eq("clinic_id", clinicId),
@@ -214,6 +216,8 @@ export const useClinic = create<ClinicStore>((set, get) => ({
         .from("appointments")
         .select("*")
         .eq("clinic_id", clinicId)
+        .gte("scheduled_at", start.toISOString())
+        .lte("scheduled_at", end.toISOString())
         .order("scheduled_at", { ascending: true }),
       supabase
         .from("queue_entries")
@@ -254,7 +258,9 @@ export const useClinic = create<ClinicStore>((set, get) => ({
     const clinic = get().clinic;
     if (!clinic) return null;
     const supabase = createClient();
-    const reference = `CF-${Math.floor(2000 + Math.random() * 8000)}`;
+    
+    // FIX: Use crypto.randomUUID for unguessable references
+    const reference = `CF-${crypto.randomUUID().slice(0,8).toUpperCase()}`;
 
     const { data, error } = await supabase
       .from("appointments")
@@ -283,21 +289,24 @@ export const useClinic = create<ClinicStore>((set, get) => ({
   async checkIn(appointmentId) {
     const supabase = createClient();
     const apt = get().appointments.find((a) => a.id === appointmentId);
-    if (!apt || apt.status !== "booked") return;
+    const clinic = get().clinic;
+    if (!apt || apt.status !== "booked" || !clinic) return;
 
-    const { error: updErr } = await supabase
-      .from("appointments")
-      .update({ status: "checked_in" })
-      .eq("id", appointmentId);
-    if (updErr) {
-      set({ error: updErr.message });
+    const start = new Date(apt.scheduledAt);
+    const shiftStart = timeInTimeZone(start, clinic.timezone);
+    const day = dateInTimeZone(new Date(), clinic.timezone);
+
+    // FIX: Use the Postgres RPC to get the next token atomically
+    const { data: token, error: tokenErr } = await supabase.rpc("next_token", {
+      p_clinic_id: apt.clinicId,
+      p_doctor_id: apt.doctorId,
+      p_day: day,
+    });
+
+    if (tokenErr || token === null) {
+      set({ error: tokenErr?.message ?? "Could not generate token." });
       return;
     }
-
-    const token = nextTokenFor(get().queueEntries, apt.doctorId);
-    const start = new Date(apt.scheduledAt);
-    const shiftStart = hhmm(start);
-    const day = new Date().toISOString().slice(0, 10);
 
     const { data, error } = await supabase
       .from("queue_entries")
@@ -322,6 +331,11 @@ export const useClinic = create<ClinicStore>((set, get) => ({
       return;
     }
 
+    await supabase
+      .from("appointments")
+      .update({ status: "checked_in" })
+      .eq("id", appointmentId);
+
     set((s) => ({
       appointments: s.appointments.map((a) =>
         a.id === appointmentId ? { ...a, status: "checked_in" } : a
@@ -334,10 +348,22 @@ export const useClinic = create<ClinicStore>((set, get) => ({
     const clinic = get().clinic;
     const doctor = get().doctors.find((d) => d.id === doctorId);
     if (!clinic || !doctor) return;
-    const shift = currentOrNextShift(doctor);
-    const token = nextTokenFor(get().queueEntries, doctorId);
-    const day = new Date().toISOString().slice(0, 10);
+    
+    const shift = currentOrNextShift(doctor, clinic.timezone);
+    const day = dateInTimeZone(new Date(), clinic.timezone);
     const supabase = createClient();
+
+    // FIX: Use the Postgres RPC to get the next token atomically
+    const { data: token, error: tokenErr } = await supabase.rpc("next_token", {
+      p_clinic_id: clinic.id,
+      p_doctor_id: doctorId,
+      p_day: day,
+    });
+
+    if (tokenErr || token === null) {
+      set({ error: tokenErr?.message ?? "Could not generate token." });
+      return;
+    }
 
     const { data, error } = await supabase
       .from("queue_entries")
@@ -376,19 +402,30 @@ export const useClinic = create<ClinicStore>((set, get) => ({
 
     const supabase = createClient();
     const nowIso = new Date().toISOString();
-    const { error } = await supabase
+    
+    // FIX: Condition on status="waiting" and only proceed if a row was actually updated
+    const { data, error } = await supabase
       .from("queue_entries")
       .update({ status: "in_consultation", called_at: nowIso })
-      .eq("id", next.id);
+      .eq("id", next.id)
+      .eq("status", "waiting")
+      .select("id")
+      .maybeSingle();
+
     if (error) {
       set({ error: error.message });
       return;
     }
+    
+    // If data is null, another receptionist clicked it first. Abort safely.
+    if (!data) return;
+
     await supabase.from("queue_events").insert({
       queue_entry_id: next.id,
       type: "called",
       actor_label: "Reception",
     });
+    
     set((s) => ({
       queueEntries: s.queueEntries.map((e) =>
         e.id === next.id ? { ...e, status: "in_consultation", calledAt: nowIso } : e

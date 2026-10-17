@@ -8,13 +8,14 @@ import { Button } from "@/components/ui/Button";
 import { DayPicker, todayIso } from "@/components/ui/DayPicker";
 import { useClinic, useEnsureLoaded } from "@/lib/store";
 import type { QueueEntry, Shift } from "@/lib/types";
-import { cn } from "@/lib/utils";
+import { weekdayForCalendarDate, cn } from "@/lib/utils";
 
 export default function DoctorPage() {
   useEnsureLoaded();
   const doctors = useClinic((s) => s.doctors);
   const currentRole = useClinic((s) => s.currentRole);
   const currentDoctorId = useClinic((s) => s.currentDoctorId);
+  const timezone = useClinic((s) => s.clinic?.timezone);
   const load = useClinic((s) => s.load);
 
   // A user with role='doctor' is locked to their own row.
@@ -23,7 +24,8 @@ export default function DoctorPage() {
   const [doctorId, setDoctorId] = useState<string>(
     isDoctor ? currentDoctorId! : doctors[0]?.id ?? ""
   );
-  const [day, setDay] = useState<string>(todayIso());
+  const [selectedDay, setSelectedDay] = useState<string | null>(null);
+  const day = selectedDay ?? todayIso(timezone);
   const [refreshing, setRefreshing] = useState(false);
 
   async function refresh() {
@@ -79,7 +81,13 @@ export default function DoctorPage() {
             <p className="text-xs font-medium uppercase tracking-wide text-muted">
               Date
             </p>
-            <DayPicker days={7} value={day} onChange={setDay} className="mt-2" />
+            <DayPicker
+              days={7}
+              value={day}
+              onChange={setSelectedDay}
+              timezone={timezone}
+              className="mt-2"
+            />
           </div>
         </div>
 
@@ -135,7 +143,7 @@ function DoctorWorkspace({
   const doctor = doctors.find((d) => d.id === doctorId)!;
   const [shiftKey, setShiftKey] = useState<string | null>(null);
 
-  const dayOfWeek = new Date(day).getDay();
+  const dayOfWeek = weekdayForCalendarDate(day);
   const shiftsForDay = useMemo(
     () =>
       (doctor.workingHours[dayOfWeek] ?? [])

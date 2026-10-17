@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { Button } from "@/components/ui/Button";
 import { createClient } from "@/lib/supabase/client";
-import { cn } from "@/lib/utils";
+import { dateInTimeZone, cn } from "@/lib/utils";
 
 type PublicRow = {
   id: string;
@@ -20,6 +20,8 @@ type DoctorLite = { id: string; name: string; specialty: string };
 
 export default function PublicQueuePage() {
   const [clinicName, setClinicName] = useState<string>("");
+  const [clinicTimezone, setClinicTimezone] = useState<string | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [doctors, setDoctors] = useState<DoctorLite[]>([]);
   const [rows, setRows] = useState<PublicRow[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -30,8 +32,8 @@ export default function PublicQueuePage() {
 
     async function fetchAll() {
       const supabase = createClient();
-      const [{ data: clinics }, { data: docs }, { data: pq }] = await Promise.all([
-        supabase.from("public_clinic").select("id, name").limit(1),
+      const [clinicRes, doctorRes, queueRes] = await Promise.all([
+        supabase.from("public_clinic").select("id, name, timezone").limit(1),
         supabase.from("public_doctors").select("id, name, specialty"),
         supabase
           .from("public_queue")
@@ -41,15 +43,26 @@ export default function PublicQueuePage() {
           .order("token_number", { ascending: true }),
       ]);
       if (cancelled) return;
-      setClinicName(clinics?.[0]?.name ?? "Clinic");
+      if (clinicRes.error || doctorRes.error || queueRes.error) {
+        setLoadError("Could not load the public queue.");
+        return;
+      }
+      const clinic = clinicRes.data?.[0];
+      if (!clinic?.timezone) {
+        setLoadError("The clinic timezone is not available.");
+        return;
+      }
+      setLoadError(null);
+      setClinicName(clinic.name ?? "Clinic");
+      setClinicTimezone(clinic.timezone);
       setDoctors(
-        (docs ?? []).map((d) => ({
+        (doctorRes.data ?? []).map((d) => ({
           id: d.id,
           name: d.name,
           specialty: d.specialty,
         }))
       );
-      setRows((pq ?? []) as PublicRow[]);
+      setRows((queueRes.data ?? []) as PublicRow[]);
     }
 
     fetchAll();
@@ -63,7 +76,9 @@ export default function PublicQueuePage() {
     };
   }, []);
 
-  const today = new Date().toISOString().slice(0, 10);
+  const today = clinicTimezone
+    ? dateInTimeZone(now, clinicTimezone)
+    : null;
 
   const perDoctor = useMemo(
     () =>
@@ -100,14 +115,21 @@ export default function PublicQueuePage() {
           </div>
           <p className="text-[11px] text-muted">
             Updated{" "}
-            {now.toLocaleTimeString("en-IN", {
-              hour: "2-digit",
-              minute: "2-digit",
-            })}
+            {clinicTimezone
+              ? now.toLocaleTimeString("en-IN", {
+                  hour: "2-digit",
+                  minute: "2-digit",
+                  timeZone: clinicTimezone,
+                })
+              : "—"}
           </p>
         </div>
 
-        {!selected && (
+        {loadError && (
+          <p className="mt-5 text-sm text-danger">{loadError}</p>
+        )}
+
+        {!loadError && !selected && (
           <div className="mt-5 grid gap-2 sm:grid-cols-2">
             {perDoctor.length === 0 && (
               <p className="text-sm text-muted">No doctors available.</p>
@@ -152,7 +174,7 @@ export default function PublicQueuePage() {
           </div>
         )}
 
-        {selected && (
+        {!loadError && selected && (
           <div className="mt-4">
             <Button
               variant="ghost"
@@ -202,7 +224,7 @@ export default function PublicQueuePage() {
 
                 {selected.waiting.length === 0 ? (
                   <p className="px-2 py-4 text-xs text-muted">
-                    No one waiting. You'll be seen quickly.
+                    No one waiting. You&apos;ll be seen quickly.
                   </p>
                 ) : (
                   <ul className="divide-y divide-line">

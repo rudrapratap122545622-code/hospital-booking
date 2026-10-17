@@ -4,7 +4,26 @@ import { createClient } from "@/lib/supabase/server";
 
 export async function GET() {
   const supabase = await createClient();
-  const { data, error } = await supabase.from("clinic_staff").select("*");
+  const { data: auth } = await supabase.auth.getUser();
+  if (!auth.user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+
+  // Verify the user has settings permissions
+  const { data: me } = await supabase
+    .from("clinic_staff")
+    .select("clinic_id, role, permissions")
+    .eq("user_id", auth.user.id)
+    .maybeSingle();
+
+  if (!me || me.role !== "owner" && !me.permissions.includes("settings")) {
+    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  }
+
+  // Only fetch staff for MY clinic
+  const { data, error } = await supabase
+    .from("clinic_staff")
+    .select("*")
+    .eq("clinic_id", me.clinic_id);
+
   if (error) return NextResponse.json({ error: error.message }, { status: 400 });
   return NextResponse.json({ staff: data });
 }
@@ -18,11 +37,13 @@ export async function POST(req: Request) {
   if (!auth.user) {
     return NextResponse.json({ error: "Not signed in" }, { status: 401 });
   }
+
   const { data: me } = await supabase
     .from("clinic_staff")
     .select("clinic_id, role")
     .eq("user_id", auth.user.id)
     .maybeSingle();
+    
   if (!me || me.role !== "owner") {
     return NextResponse.json({ error: "Owner only" }, { status: 403 });
   }
@@ -39,6 +60,7 @@ export async function POST(req: Request) {
     email_confirm: true,
     user_metadata: { full_name: fullName },
   });
+  
   if (createErr || !created.user) {
     return NextResponse.json(
       { error: createErr?.message ?? "Could not create user." },
